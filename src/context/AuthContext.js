@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { supabase } from "../supabaseClient";
 
 const AuthContext = createContext(null);
@@ -7,6 +7,7 @@ export function AuthProvider({ children }) {
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
+  const initRef = useRef(false);
 
   const fetchProfile = useCallback(async (userId) => {
     if (!userId) return;
@@ -32,25 +33,29 @@ export function AuthProvider({ children }) {
   }, [session, fetchProfile]);
 
   useEffect(() => {
-    const init = async () => {
-      try {
-        const { data, error } = await supabase.auth.getSession();
-        if (error) console.error(error);
-        const currentSession = data?.session ?? null;
-        setSession(currentSession);
+    if (!initRef.current) {
+      initRef.current = true;
 
-        if (currentSession?.user?.id) {
-          await fetchProfile(currentSession.user.id);
+      const init = async () => {
+        try {
+          const { data, error } = await supabase.auth.getSession();
+          if (error) console.error(error);
+          const currentSession = data?.session ?? null;
+          setSession(currentSession);
+
+          if (currentSession?.user?.id) {
+            await fetchProfile(currentSession.user.id);
+          }
+        } catch (error) {
+          console.error(error);
+          setSession(null);
+        } finally {
+          setLoading(false);
         }
-      } catch (error) {
-        console.error(error);
-        setSession(null);
-      } finally {
-        setLoading(false);
-      }
-    };
+      };
 
-    init();
+      init();
+    }
 
     const { data: listener } = supabase.auth.onAuthStateChange(async (_event, session) => {
       setSession(session);
