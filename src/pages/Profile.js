@@ -20,11 +20,11 @@ export default function Profile() {
   useEffect(() => {
     setFirstName(profile?.first_name ?? "");
     setLastName(profile?.last_name ?? "");
-    setEmail(profile?.email ?? "");
+    setEmail(user?.email ?? "");
     setMobile(profile?.mobile_number ?? "");
     setProfileImageUrl(profile?.profile_image_url ?? "");
     setPreviewUrl(profile?.profile_image_url ?? "");
-  }, [profile]);
+  }, [profile, user]);
 
   useEffect(() => {
     return () => {
@@ -78,12 +78,20 @@ export default function Profile() {
         imageUrl = await uploadProfileImage(imageFile);
       }
 
+      // Update email in Supabase Auth (changes login credentials)
+      if (email && email !== user?.email) {
+        const { error: emailError } = await supabase.auth.updateUser({ email });
+        if (emailError) {
+          console.error("Auth email update error:", emailError);
+          throw new Error(`Failed to update login email: ${emailError.message}`);
+        }
+      }
+
       const { error: profileError } = await supabase.from("profile").upsert(
         {
           user_id: user?.id,
           first_name: firstName,
           last_name: lastName,
-          email: email,
           mobile_number: mobile,
           profile_image_url: imageUrl,
         },
@@ -91,6 +99,7 @@ export default function Profile() {
       );
 
       if (profileError) {
+        console.error("Profile update error:", profileError);
         throw profileError;
       }
 
@@ -98,6 +107,7 @@ export default function Profile() {
       setMessage("Profile saved successfully.");
       setImageFile(null);
     } catch (saveError) {
+      console.error("Save error:", saveError);
       setError(saveError.message || "Unable to save profile.");
     } finally {
       setSaving(false);
