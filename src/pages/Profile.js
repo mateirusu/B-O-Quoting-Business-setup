@@ -182,7 +182,7 @@ export default function Profile({ inline = false }) {
 
   return (
     <div className="min-h-screen bg-black text-white p-6">
-      <h1 className="text-2xl font-bold mb-4">Profile111</h1>
+      <h1 className="text-2xl font-bold mb-4">Profile</h1>
       {content}
     </div>
   );
