@@ -330,3 +330,136 @@ button.w-full {
 .text-muted {
   color: var(--text-muted);
 }
+
+.flex-col {
+  flex-direction: column;
+}
+
+.flex-1 {
+  flex: 1 1 0%;
+}
+
+.gap-3 {
+  gap: 0.75rem;
+}
+
+.gap-6 {
+  gap: 1.5rem;
+}
+
+.block {
+  display: block;
+}
+
+.text-slate-300 {
+  color: #cbd5e1;
+}
+
+.text-slate-400 {
+  color: #94a3b8;
+}
+
+.text-slate-500 {
+  color: #64748b;
+}
+
+.text-slate-200 {
+  color: #e2e8f0;
+}
+
+.text-emerald-200 {
+  color: #a7f3d0;
+}
+
+.text-red-200 {
+  color: #fecaca;
+}
+
+.bg-zinc-950 {
+  background: #09090b;
+}
+
+.bg-sky-500 {
+  background: linear-gradient(135deg, #0ea5e9, #2d98ff);
+}
+
+.border-zinc-700 {
+  border-color: #3f3f46;
+}
+
+.border-emerald-500 {
+  border-color: #10b981;
+}
+
+.border-red-500 {
+  border-color: #ef4444;
+}
+
+.bg-emerald-500\/10 {
+  background: rgba(16, 185, 129, 0.1);
+}
+
+.bg-red-500\/10 {
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.bg-black\/70 {
+  background: rgba(0, 0, 0, 0.7);
+}
+
+.h-28 {
+  height: 7rem;
+}
+
+.w-28 {
+  width: 7rem;
+}
+
+.object-cover {
+  object-fit: cover;
+}
+
+.overflow-hidden {
+  overflow: hidden;
+}
+
+.px-5 {
+  padding-left: 1.25rem;
+  padding-right: 1.25rem;
+}
+
+.font-semibold {
+  font-weight: 600;
+}
+
+.mt-1 {
+  margin-top: 0.25rem;
+}
+
+.mb-4 {
+  margin-bottom: 1rem;
+}
+
+.space-y-3 > * + * {
+  margin-top: 0.75rem;
+}
+
+.space-y-6 > * + * {
+  margin-top: 1.5rem;
+}
+
+.transition {
+  transition: all 0.2s ease;
+}
+
+.disabled\:opacity-50:disabled {
+  opacity: 0.5;
+}
+
+.hover\:bg-sky-400:hover {
+  background: linear-gradient(135deg, #38bdf8, #40c2ff);
+}
+
+.hover\:bg-zinc-700:hover {
+  background: #3f3f46;
+}

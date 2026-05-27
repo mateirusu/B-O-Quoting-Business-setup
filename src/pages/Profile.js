@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { supabase } from "../supabaseClient";
 
-export default function Profile({ inline = false }) {
+export default function Profile() {
   const { session, profile, refreshProfile } = useAuth();
   const user = session?.user;
   const [firstName, setFirstName] = useState("");
@@ -15,15 +15,16 @@ export default function Profile({ inline = false }) {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState(null);
   const [error, setError] = useState(null);
+  const [showConfirm, setShowConfirm] = useState(false);
 
   useEffect(() => {
     setFirstName(profile?.first_name ?? "");
     setLastName(profile?.last_name ?? "");
+    setEmail(profile?.email ?? "");
     setMobile(profile?.mobile_number ?? "");
     setProfileImageUrl(profile?.profile_image_url ?? "");
     setPreviewUrl(profile?.profile_image_url ?? "");
-    setEmail(user?.email ?? "");
-  }, [profile, user]);
+  }, [profile]);
 
   useEffect(() => {
     return () => {
@@ -43,10 +44,10 @@ export default function Profile({ inline = false }) {
   };
 
   const uploadProfileImage = async (file) => {
-    if (!session?.user?.id) return null;
+    if (!user?.id) return null;
 
     const fileExt = file.name.split(".").pop();
-    const filePath = `avatars/${session.user.id}.${fileExt}`;
+    const filePath = `avatars/${user.id}.${fileExt}`;
 
     const { error: uploadError } = await supabase.storage
       .from("avatars")
@@ -60,8 +61,13 @@ export default function Profile({ inline = false }) {
     return data?.publicUrl;
   };
 
-  const handleSave = async (event) => {
+  const handleSaveClick = (event) => {
     event.preventDefault();
+    setShowConfirm(true);
+  };
+
+  const handleConfirmSave = async () => {
+    setShowConfirm(false);
     setSaving(true);
     setMessage(null);
     setError(null);
@@ -72,18 +78,12 @@ export default function Profile({ inline = false }) {
         imageUrl = await uploadProfileImage(imageFile);
       }
 
-      if (email && email !== user?.email) {
-        const { error: emailError } = await supabase.auth.updateUser({ email });
-        if (emailError) {
-          throw emailError;
-        }
-      }
-
       const { error: profileError } = await supabase.from("profile").upsert(
         {
           user_id: user?.id,
           first_name: firstName,
           last_name: lastName,
+          email: email,
           mobile_number: mobile,
           profile_image_url: imageUrl,
         },
@@ -104,7 +104,11 @@ export default function Profile({ inline = false }) {
     }
   };
 
-  const content = (
+  const handleCancelConfirm = () => {
+    setShowConfirm(false);
+  };
+
+  return (
     <div className="bg-zinc-900 p-6 rounded-2xl space-y-6">
       <div className="flex flex-col gap-3">
         <label className="block text-slate-400">First Name</label>
@@ -167,23 +171,35 @@ export default function Profile({ inline = false }) {
       {error && <div className="rounded-2xl bg-red-500/10 border border-red-500 p-4 text-red-200">{error}</div>}
 
       <button
-        onClick={handleSave}
+        onClick={handleSaveClick}
         disabled={saving}
         className="rounded-2xl bg-sky-500 px-5 py-3 font-semibold text-black hover:bg-sky-400 disabled:opacity-50"
       >
         {saving ? "Saving..." : "Save Profile"}
       </button>
-    </div>
-  );
 
-  if (inline) {
-    return content;
-  }
-
-  return (
-    <div className="min-h-screen bg-black text-white p-6">
-      <h1 className="text-2xl font-bold mb-4">Profile</h1>
-      {content}
+      {showConfirm && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center" style={{ zIndex: 50 }}>
+          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 max-w-sm w-full space-y-4">
+            <h3 className="text-xl font-bold">Confirm Changes</h3>
+            <p className="text-slate-300">Are you sure you want to update your profile details?</p>
+            <div className="flex gap-3">
+              <button
+                onClick={handleConfirmSave}
+                className="flex-1 rounded-2xl bg-sky-500 px-4 py-3 font-semibold text-black hover:bg-sky-400"
+              >
+                Yes, Save
+              </button>
+              <button
+                onClick={handleCancelConfirm}
+                className="flex-1 rounded-2xl bg-zinc-800 px-4 py-3 font-semibold text-white hover:bg-zinc-700"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -3,7 +3,6 @@ import BusinessGate from "../components/BusinessGate";
 import ProtectedRoute from "../components/ProtectedRoute";
 import Dashboard from "../pages/Dashboard";
 import Login from "../pages/Login";
-import Profile from "../pages/Profile";
 import Register from "../pages/Register";
 import Settings from "../pages/Settings";
 import CRM from "../pages/CRM";
@@ -40,16 +39,6 @@ export default function AppRoutes() {
           <ProtectedRoute>
             <BusinessGate>
               <Schedule />
-            </BusinessGate>
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/profile"
-        element={
-          <ProtectedRoute>
-            <BusinessGate>
-              <Profile />
             </BusinessGate>
           </ProtectedRoute>
         }
