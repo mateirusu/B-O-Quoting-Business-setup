@@ -1,6 +1,8 @@
 import { useState } from "react";
 import PageHeader from "../components/PageHeader";
 import Profile from "./Profile";
+import Pricing from "./Pricing";
+import Services from "./Services";
 
 export default function Settings() {
   const [activeTab, setActiveTab] = useState("Pricing");
@@ -8,9 +10,9 @@ export default function Settings() {
   const renderContent = () => {
     switch (activeTab) {
       case "Pricing":
-        return <div className="text-slate-300">Pricing settings will be displayed here.</div>;
+        return <Pricing />;
       case "Services":
-        return <div className="text-slate-300">Services settings will be displayed here.</div>;
+        return <Services />;
       case "Business":
         return <div className="text-slate-300">Business settings will be displayed here.</div>;
       case "Engineers":
