@@ -20,11 +20,11 @@ export default function Profile() {
   useEffect(() => {
     setFirstName(profile?.first_name ?? "");
     setLastName(profile?.last_name ?? "");
-    setEmail(user?.email ?? "");
+    setEmail(profile?.email ?? "");
     setMobile(profile?.mobile_number ?? "");
     setProfileImageUrl(profile?.profile_image_url ?? "");
     setPreviewUrl(profile?.profile_image_url ?? "");
-  }, [profile, user]);
+  }, [profile]);
 
   useEffect(() => {
     return () => {
@@ -78,14 +78,7 @@ export default function Profile() {
         imageUrl = await uploadProfileImage(imageFile);
       }
 
-      // Update email in Supabase Auth (changes login credentials)
-      if (email && email !== user?.email) {
-        const { error: emailError } = await supabase.auth.updateUser({ email });
-        if (emailError) {
-          console.error("Auth email update error:", emailError);
-          throw new Error(`Failed to update login email: ${emailError.message}`);
-        }
-      }
+
 
       const { error: profileError } = await supabase.from("profile").upsert(
         {
