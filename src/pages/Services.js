@@ -3,7 +3,6 @@ import { useAuth } from "../context/AuthContext";
 import { supabase } from "../supabaseClient";
 
 export default function Services() {
-  const BASIC_HOURLY_RATE = 50;
   const { profile, loading: authLoading } = useAuth();
 
   const [search, setSearch] = useState("");
@@ -11,6 +10,7 @@ export default function Services() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const [hourlyRate, setHourlyRate] = useState(null);
 
   const emptyService = {
     title: "",
@@ -21,11 +21,33 @@ export default function Services() {
   };
 
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isEditMode, setIsEditMode] = useState(false);
   const [editingServiceId, setEditingServiceId] = useState(null);
   const [tempService, setTempService] = useState(null);
   const [imageFile, setImageFile] = useState(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [serviceToDelete, setServiceToDelete] = useState(null);
+
+  // Fetch hourly rate from basic_pricing table
+  const fetchHourlyRate = useCallback(async () => {
+    if (!profile?.business_id) return;
+
+    try {
+      const { data, error } = await supabase
+        .from("basic_pricing")
+        .select("hourly_rate")
+        .eq("business_id", profile.business_id)
+        .maybeSingle();
+
+      if (error) throw error;
+
+      console.log("Fetched hourly rate:", data);
+      setHourlyRate(data?.hourly_rate ?? null);
+    } catch (err) {
+      console.error("Error fetching hourly rate:", err);
+      setHourlyRate(null);
+    }
+  }, [profile?.business_id]);
 
   // Fetch services for the user's business
   const fetchServices = useCallback(async () => {
@@ -57,9 +79,10 @@ export default function Services() {
 
   useEffect(() => {
     if (!authLoading && profile?.business_id) {
+      fetchHourlyRate();
       fetchServices();
     }
-  }, [authLoading, profile?.business_id, fetchServices]);
+  }, [authLoading, profile?.business_id, fetchHourlyRate, fetchServices]);
 
   const sanitizeNumberInput = (value) => {
     if (!value) return "";
@@ -71,12 +94,13 @@ export default function Services() {
 
   const calculatePrice = (hours) => {
     const h = parseFloat(hours);
-    if (isNaN(h)) return 0;
-    return (h * BASIC_HOURLY_RATE).toFixed(2);
+    if (isNaN(h) || hourlyRate === null) return 0;
+    return (h * hourlyRate).toFixed(2);
   };
 
   const openEditModal = (service) => {
-    setEditingServiceId(service.id);
+    setIsEditMode(true);
+    setEditingServiceId(service.service_id);
     setTempService({
       title: service.title,
       description: service.description || "",
@@ -88,6 +112,7 @@ export default function Services() {
   };
 
   const openAddModal = () => {
+    setIsEditMode(false);
     setEditingServiceId(null);
     setTempService({ ...emptyService });
     setImageFile(null);
@@ -96,6 +121,7 @@ export default function Services() {
 
   const closeModal = () => {
     setIsModalOpen(false);
+    setIsEditMode(false);
     setEditingServiceId(null);
     setTempService(null);
     setImageFile(null);
@@ -126,6 +152,7 @@ export default function Services() {
 
   const saveChanges = async () => {
     if (!tempService || !profile?.business_id) return;
+    if (saving) return; // Prevent multiple simultaneous saves
 
     try {
       setSaving(true);
@@ -150,17 +177,17 @@ export default function Services() {
       };
 
       let err;
-      if (editingServiceId) {
-        // Update existing service
+      if (isEditMode && editingServiceId) {
+        // UPDATE existing service - only update, never insert
         const { error } = await supabase
           .from("service")
           .update(serviceData)
-          .eq("id", editingServiceId)
-          .eq("business_id", profile.business_id); // Ensure user can only update their own services
+          .eq("service_id", editingServiceId)
+          .eq("business_id", profile.business_id);
 
         err = error;
       } else {
-        // Insert new service
+        // INSERT new service - only insert, never update
         const { error } = await supabase
           .from("service")
           .insert([serviceData]);
@@ -181,13 +208,23 @@ export default function Services() {
   };
 
   const openDeleteConfirm = (serviceId) => {
-    setServiceToDelete(serviceId);
-    setDeleteConfirmOpen(true);
+  setServiceToDelete(serviceId);
+  setIsModalOpen(false);
+  setDeleteConfirmOpen(true);
   };
 
   const closeDeleteConfirm = () => {
     setDeleteConfirmOpen(false);
+    setIsModalOpen(true);
     setServiceToDelete(null);
+  };
+
+  const closeDeleteAfterSuccess = () => {
+  setDeleteConfirmOpen(false);
+  setIsModalOpen(false);
+  setServiceToDelete(null);
+  setEditingServiceId(null);
+  setTempService(null);
   };
 
   const confirmDelete = async () => {
@@ -199,13 +236,13 @@ export default function Services() {
       const { error } = await supabase
         .from("service")
         .delete()
-        .eq("id", serviceToDelete)
+        .eq("service_id", serviceToDelete)
         .eq("business_id", profile.business_id); // Ensure user can only delete their own services
 
       if (error) throw error;
 
       await fetchServices();
-      closeDeleteConfirm();
+      closeDeleteAfterSuccess();
     } catch (err) {
       console.error("Delete error:", err);
       setError("Failed to delete service");
@@ -275,6 +312,13 @@ export default function Services() {
         </button>
       </div>
 
+      {/* HOURLY RATE NOT SET WARNING */}
+      {hourlyRate === null && filteredServices.length > 0 && (
+        <div className="bg-yellow-500/10 border border-yellow-500 rounded-xl p-4 text-yellow-200 text-sm">
+          Hourly rate not configured. Please set up basic pricing to display service prices.
+        </div>
+      )}
+
       {/* SERVICES GRID */}
       {filteredServices.length === 0 ? (
         <div className="text-center py-12 text-zinc-400">
@@ -283,43 +327,49 @@ export default function Services() {
             : "No services added yet. Click '+ Add New' to get started."}
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+        <div className="services-grid">
           {filteredServices.map((s) => (
             <div
-              key={s.id}
-              className="group relative bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden hover:scale-[1.02] transition"
+              key={s.service_id}
+              className="group relative bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden hover:scale-[1.02] transition"
             >
               <img
                 src={s.image_url}
-                className="h-32 w-full object-cover"
+                className="h-24 w-full object-cover"
                 alt={s.title}
               />
-              <div className="p-4">
-                <div className="text-lg font-bold mb-1">{s.title}</div>
-                <div className="text-sm text-zinc-400 line-clamp-2">
+              <div className="p-3">
+                <div className="text-base font-bold mb-1">{s.title}</div>
+                <div className="text-xs text-zinc-400 line-clamp-2">
                   {s.description}
                 </div>
-                <div className="text-sm text-zinc-400 mt-1">
-                  {s.hours} hours
-                </div>
-                <div className="text-sm text-sky-300">
-                  £{calculatePrice(s.hours)}
+                <div className="text-xs text-zinc-400 mt-1">
+                  {s.hours} hours · £{calculatePrice(s.hours)}
                 </div>
               </div>
 
-              {/* Action buttons (visible on hover) */}
-              <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-2">
+              {/* Edit button */}
+              <div style={{ position: 'absolute', top: '8px', right: '8px', display: 'flex', gap: '8px' }}>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
                     openEditModal(s);
                   }}
-                  className="p-2 bg-sky-500 rounded-full hover:bg-sky-400"
+                  style={{
+                    padding: '8px',
+                    background: 'linear-gradient(135deg, #40c2ff, #2d98ff)',
+                    borderRadius: '9999px',
+                    border: 'none',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
                   title="Edit"
                 >
                   <svg
                     xmlns="http://www.w3.org/2000/svg"
-                    className="h-4 w-4 text-black"
+                    style={{ height: '16px', width: '16px', color: '#020617' }}
                     fill="none"
                     viewBox="0 0 24 24"
                     stroke="currentColor"
@@ -332,29 +382,6 @@ export default function Services() {
                     />
                   </svg>
                 </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    openDeleteConfirm(s.id);
-                  }}
-                  className="p-2 bg-red-500 rounded-full hover:bg-red-400"
-                  title="Delete"
-                >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    className="h-4 w-4 text-white"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                    />
-                  </svg>
-                </button>
               </div>
             </div>
           ))}
@@ -363,7 +390,7 @@ export default function Services() {
 
       {/* DELETE CONFIRMATION MODAL */}
       {deleteConfirmOpen && (
-        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[100] bg-black/70 flex items-center justify-center p-4">
           <div className="bg-zinc-900 rounded-2xl p-5 w-full max-w-sm">
             <h2 className="text-lg font-bold mb-3">Delete Service</h2>
             <p className="text-zinc-300 text-sm mb-5">
@@ -391,10 +418,10 @@ export default function Services() {
 
       {/* EDIT/ADD MODAL */}
       {isModalOpen && tempService && (
-        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-40 bg-black/70 flex items-center justify-center p-4">
           <div className="bg-zinc-900 rounded-2xl p-5 w-full max-w-md max-h-[90vh] overflow-y-auto">
             <h2 className="text-lg font-bold mb-4">
-              {editingServiceId ? "Edit Service" : "Add Service"}
+              {isEditMode ? "Edit Service" : "Add Service"}
             </h2>
 
             <div className="space-y-3">
@@ -442,21 +469,32 @@ export default function Services() {
               </div>
             </div>
 
-            <div className="flex justify-end gap-3 mt-5">
-              <button
-                onClick={closeModal}
-                disabled={saving}
-                className="px-4 py-2 text-sm border border-zinc-600 rounded-xl hover:bg-zinc-800 disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={saveChanges}
-                disabled={saving}
-                className="px-4 py-2 text-sm bg-sky-400 text-black rounded-xl font-bold hover:bg-sky-300 disabled:opacity-50"
-              >
-                {saving ? "Saving..." : "Save"}
-              </button>
+            <div className="flex justify-between items-center mt-5">
+              {isEditMode && (
+                <button
+                  onClick={() => openDeleteConfirm(editingServiceId)}
+                  disabled={saving}
+                  className="px-4 py-2 text-sm bg-red-500 text-white rounded-xl font-bold hover:bg-red-400 disabled:opacity-50"
+                >
+                  Delete
+                </button>
+              )}
+              <div className={`flex gap-3 ${isEditMode ? '' : 'ml-auto'}`}>
+                <button
+                  onClick={closeModal}
+                  disabled={saving}
+                  className="px-4 py-2 text-sm border border-zinc-600 rounded-xl hover:bg-zinc-800 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={saveChanges}
+                  disabled={saving}
+                  className="px-4 py-2 text-sm bg-sky-400 text-black rounded-xl font-bold hover:bg-sky-300 disabled:opacity-50"
+                >
+                  {saving ? "Saving..." : "Save"}
+                </button>
+              </div>
             </div>
           </div>
         </div>
