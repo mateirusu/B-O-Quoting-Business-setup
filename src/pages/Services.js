@@ -331,14 +331,17 @@ export default function Services() {
           {filteredServices.map((s) => (
             <div
               key={s.service_id}
-              className="group relative bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden hover:scale-[1.02] transition"
+              className="group relative bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden hover:scale-[1.02] transition flex flex-col"
+              style={{ minHeight: '200px' }}
             >
-              <img
-                src={s.image_url}
-                className="h-24 w-full object-cover"
-                alt={s.title}
-              />
-              <div className="p-3">
+              <div className="h-24 w-full overflow-hidden flex-shrink-0">
+                <img
+                  src={s.image_url}
+                  className="h-full w-full object-cover"
+                  alt={s.title}
+                />
+              </div>
+              <div className="p-3 flex-grow">
                 <div className="text-base font-bold mb-1">{s.title}</div>
                 <div className="text-xs text-zinc-400 line-clamp-2">
                   {s.description}
@@ -426,25 +429,28 @@ export default function Services() {
 
             <div className="space-y-3">
               <div>
+                <label className="block text-xs text-zinc-400 mb-1">Service Title</label>
                 <input
                   className="w-full p-2 rounded-xl bg-zinc-950 border border-zinc-700 text-white text-sm"
                   value={tempService.title}
                   onChange={(e) => handleChange("title", e.target.value)}
-                  placeholder="Service title"
+                  placeholder="Enter service title"
                 />
               </div>
 
               <div>
+                <label className="block text-xs text-zinc-400 mb-1">Description</label>
                 <textarea
                   className="w-full p-2 rounded-xl bg-zinc-950 border border-zinc-700 text-white text-sm resize-none"
                   value={tempService.description}
                   onChange={(e) => handleChange("description", e.target.value)}
-                  placeholder="Description (optional)"
+                  placeholder="Enter service description (optional)"
                   rows="2"
                 />
               </div>
 
               <div>
+                <label className="block text-xs text-zinc-400 mb-1">Labour(Hours)</label>
                 <input
                   className="w-full p-2 rounded-xl bg-zinc-950 border border-zinc-700 text-white text-sm"
                   inputMode="decimal"
@@ -455,11 +461,12 @@ export default function Services() {
                       hours: sanitizeNumberInput(e.target.value),
                     })
                   }
-                  placeholder="Hours"
+                  placeholder="Enter estimated hours"
                 />
               </div>
 
               <div>
+                <label className="block text-xs text-zinc-400 mb-1">Service Image</label>
                 <input
                   type="file"
                   accept="image/*"
