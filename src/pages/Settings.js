@@ -3,6 +3,7 @@ import PageHeader from "../components/PageHeader";
 import Profile from "./Profile";
 import Pricing from "./Pricing";
 import Services from "./Services";
+import Materials from "./Materials";
 
 export default function Settings() {
   const [activeTab, setActiveTab] = useState("Pricing");
@@ -13,6 +14,8 @@ export default function Settings() {
         return <Pricing />;
       case "Services":
         return <Services />;
+      case "Materials":
+        return <Materials />;
       case "Business":
         return <div className="text-slate-300">Business settings will be displayed here.</div>;
       case "Engineers":
@@ -30,7 +33,7 @@ export default function Settings() {
 
       <div className="flex gap-6">
         <aside style={{ width: "10%" }} className="bg-zinc-900 rounded-2xl p-4 space-y-3">
-          {["Pricing", "Services", "Business", "Engineers", "Profile"].map((tab) => (
+          {["Pricing", "Services", "Materials", "Business", "Engineers", "Profile"].map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
