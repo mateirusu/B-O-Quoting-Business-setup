@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "../context/AuthContext";
 import { supabase } from "../supabaseClient";
+import MaterialServiceLink from "./MaterialServiceLink";
 
 export default function Services() {
   const { profile, loading: authLoading } = useAuth();
@@ -13,10 +14,10 @@ export default function Services() {
   const [hourlyRate, setHourlyRate] = useState(null);
 
   // Materials state
-  const [allMaterials, setAllMaterials] = useState([]);
   const [selectedMaterialIds, setSelectedMaterialIds] = useState([]);
   const [isMaterialsModalOpen, setIsMaterialsModalOpen] = useState(false);
-  const [materialsLoading, setMaterialsLoading] = useState(false);
+  const [serviceMaterialsTotal, setServiceMaterialsTotal] = useState({ base: "0.00", markup: "0.00", total: "0.00" });
+  const [serviceMaterialsTotals, setServiceMaterialsTotals] = useState({});
 
   const emptyService = {
     title: "",
@@ -33,6 +34,7 @@ export default function Services() {
   const [imageFile, setImageFile] = useState(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [serviceToDelete, setServiceToDelete] = useState(null);
+  const [descriptionPopup, setDescriptionPopup] = useState(null);
 
   // Fetch hourly rate from basic_pricing table
   const fetchHourlyRate = useCallback(async () => {
@@ -52,6 +54,37 @@ export default function Services() {
     } catch (err) {
       console.error("Error fetching hourly rate:", err);
       setHourlyRate(null);
+    }
+  }, [profile?.business_id]);
+
+  // Fetch materials totals for all services (for tile display)
+  const fetchAllServicesMaterialsTotals = useCallback(async () => {
+    if (!profile?.business_id) return;
+    try {
+      const { data, error } = await supabase
+        .from("material_service_link")
+        .select(`
+          service_id,
+          quantity,
+          material:material_id (
+            base_price_no_vat,
+            markup
+          )
+        `)
+        .eq("business_id", profile.business_id);
+
+      if (error) throw error;
+
+      const totals = {};
+      (data || []).forEach(link => {
+        const price = parseFloat(link.material?.base_price_no_vat) || 0;
+        const markup = parseFloat(link.material?.markup) || 0;
+        const qty = parseInt(link.quantity) || 1;
+        totals[link.service_id] = (totals[link.service_id] || 0) + price * (1 + markup / 100) * qty;
+      });
+      setServiceMaterialsTotals(totals);
+    } catch (err) {
+      console.error("Error fetching all services materials totals:", err);
     }
   }, [profile?.business_id]);
 
@@ -83,54 +116,13 @@ export default function Services() {
     }
   }, [profile?.business_id]);
 
-  // Fetch all materials for the user's business
-  const fetchAllMaterials = useCallback(async () => {
-    if (!profile?.business_id) return;
-
-    try {
-      setMaterialsLoading(true);
-      const { data, error } = await supabase
-        .from("material")
-        .select("*")
-        .eq("business_id", profile.business_id)
-        .order("name");
-
-      if (error) throw error;
-      setAllMaterials(data || []);
-    } catch (err) {
-      console.error("Error fetching materials:", err);
-    } finally {
-      setMaterialsLoading(false);
-    }
-  }, [profile?.business_id]);
-
-  // Fetch material-service links for a specific service
-  const fetchServiceMaterials = useCallback(async (serviceId) => {
-    if (!serviceId) {
-      setSelectedMaterialIds([]);
-      return;
-    }
-
-    try {
-      const { data, error } = await supabase
-        .from("material_service_link")
-        .select("material_id")
-        .eq("service_id", serviceId);
-
-      if (error) throw error;
-      setSelectedMaterialIds(data?.map(d => d.material_id) || []);
-    } catch (err) {
-      console.error("Error fetching service materials:", err);
-      setSelectedMaterialIds([]);
-    }
-  }, []);
-
   useEffect(() => {
     if (!authLoading && profile?.business_id) {
       fetchHourlyRate();
       fetchServices();
+      fetchAllServicesMaterialsTotals();
     }
-  }, [authLoading, profile?.business_id, fetchHourlyRate, fetchServices]);
+  }, [authLoading, profile?.business_id, fetchHourlyRate, fetchServices, fetchAllServicesMaterialsTotals]);
 
   const sanitizeNumberInput = (value) => {
     if (!value) return "";
@@ -156,8 +148,10 @@ export default function Services() {
       image_url: service.image_url || emptyService.image_url,
     });
     setImageFile(null);
-    fetchServiceMaterials(service.service_id);
+    setSelectedMaterialIds([]);
+    setServiceMaterialsTotal({ base: "0.00", markup: "0.00", total: "0.00" });
     setIsModalOpen(true);
+    fetchServiceMaterialsTotal(service.service_id);
   };
 
   const openAddModal = () => {
@@ -166,6 +160,7 @@ export default function Services() {
     setTempService({ ...emptyService });
     setImageFile(null);
     setSelectedMaterialIds([]);
+    setServiceMaterialsTotal({ base: "0.00", markup: "0.00", total: "0.00" });
     setIsModalOpen(true);
   };
 
@@ -180,88 +175,78 @@ export default function Services() {
 
   // Materials modal handlers
   const openMaterialsModal = () => {
-  fetchAllMaterials();
-  setIsModalOpen(false);
-  setIsMaterialsModalOpen(true);
+    setIsModalOpen(false); // Close the service modal first
+    setIsMaterialsModalOpen(true);
   };
 
   const closeMaterialsModal = () => {
-  setIsMaterialsModalOpen(false);
-  setIsModalOpen(true);
+    setIsMaterialsModalOpen(false);
+    setIsModalOpen(true); // Re-open the service modal
   };
 
-  const toggleMaterialSelection = (materialId) => {
-    setSelectedMaterialIds(prev =>
-      prev.includes(materialId)
-        ? prev.filter(id => id !== materialId)
-        : [...prev, materialId]
-    );
+  const handleMaterialsSaved = (materialsTotal) => {
+    if (materialsTotal) {
+      setServiceMaterialsTotal(materialsTotal);
+    }
+    setIsMaterialsModalOpen(false);
+    setIsModalOpen(true);
+    fetchServiceMaterialsCount();
+    fetchAllServicesMaterialsTotals();
   };
 
-  const saveMaterialsSelection = async () => {
-    // If we're editing an existing service, save links directly
-    if (isEditMode && editingServiceId) {
-      try {
-        setSaving(true);
+  // Fetch count and totals of materials linked to a service (for display)
+  const fetchServiceMaterialsTotal = async (svcId) => {
+    if (!svcId) return;
+    try {
+      const { data, error } = await supabase
+        .from("material_service_link")
+        .select(`
+          quantity,
+          material_id,
+          material:material_id (
+            base_price_no_vat,
+            markup
+          )
+        `)
+        .eq("service_id", svcId);
 
-        // Delete existing links
-        await supabase
-          .from("material_service_link")
-          .delete()
-          .eq("service_id", editingServiceId);
+      if (error) throw error;
 
-        // Insert new links
-        if (selectedMaterialIds.length > 0) {
-          const links = selectedMaterialIds.map(materialId => ({
-            material_id: materialId,
-            service_id: editingServiceId,
-            profile_id: profile.profile_id,
-          }));
+      const links = data || [];
+      setSelectedMaterialIds(links.map(d => d.material_id));
 
-          const { error } = await supabase
-            .from("material_service_link")
-            .insert(links);
+      const baseTotal = links.reduce((sum, link) => {
+        const price = parseFloat(link.material?.base_price_no_vat) || 0;
+        const qty = parseInt(link.quantity) || 1;
+        return sum + price * qty;
+      }, 0);
 
-          if (error) throw error;
-        }
-        setIsModalOpen(true);
-        setIsMaterialsModalOpen(false);
-        await fetchServices();
-      } catch (err) {
-        console.error("Error saving materials:", err);
-        setError("Failed to save materials");
-      } finally {
-        setSaving(false);
-      }
-    } else {
-      // For new services, just close the modal - links will be saved when service is created
-      setIsModalOpen(true);
-      setIsMaterialsModalOpen(false);
+      const markupTotal = links.reduce((sum, link) => {
+        const price = parseFloat(link.material?.base_price_no_vat) || 0;
+        const markup = parseFloat(link.material?.markup) || 0;
+        const qty = parseInt(link.quantity) || 1;
+        return sum + price * (markup / 100) * qty;
+      }, 0);
+
+      setServiceMaterialsTotal({
+        base: baseTotal.toFixed(2),
+        markup: markupTotal.toFixed(2),
+        total: (baseTotal + markupTotal).toFixed(2),
+      });
+    } catch (err) {
+      console.error("Error fetching service materials total:", err);
     }
   };
 
-  // Calculate materials total
-  const calculateMaterialsTotal = () => {
-    const selectedMaterials = allMaterials.filter(m => selectedMaterialIds.includes(m.material_id));
-    const baseTotal = selectedMaterials.reduce((sum, m) => sum + (parseFloat(m.base_price_no_vat) || 0), 0);
-    const markupTotal = selectedMaterials.reduce((sum, m) => {
-      const base = parseFloat(m.base_price_no_vat) || 0;
-      const markup = parseFloat(m.markup) || 0;
-      return sum + (base * markup / 100);
-    }, 0);
-    return {
-      base: baseTotal.toFixed(2),
-      markup: markupTotal.toFixed(2),
-      total: (baseTotal + markupTotal).toFixed(2),
-    };
+  const fetchServiceMaterialsCount = async () => {
+    fetchServiceMaterialsTotal(editingServiceId);
   };
 
   // Calculate service total price
   const calculateServiceTotal = (hours) => {
     const labour = parseFloat(calculatePrice(hours)) || 0;
-    const materials = calculateMaterialsTotal();
-    const materialsBase = parseFloat(materials.base) || 0;
-    const materialsMarkup = parseFloat(materials.markup) || 0;
+    const materialsBase = parseFloat(serviceMaterialsTotal.base) || 0;
+    const materialsMarkup = parseFloat(serviceMaterialsTotal.markup) || 0;
     const total = (labour + materialsBase + materialsMarkup).toFixed(2);
     return {
       labour: labour.toFixed(2),
@@ -275,9 +260,7 @@ export default function Services() {
   const getSelectedMaterialsText = () => {
     const count = selectedMaterialIds.length;
     if (count === 0) return "No materials";
-    const materials = allMaterials.filter(m => selectedMaterialIds.includes(m.material_id));
-    if (count <= 2) return materials.map(m => m.name).join(", ");
-    return `${materials.slice(0, 2).map(m => m.name).join(", ")} +${count - 2} more`;
+    return `${count} material${count > 1 ? 's' : ''} linked`;
   };
 
   const uploadImage = async (file, userId) => {
@@ -305,7 +288,7 @@ export default function Services() {
 
   const saveChanges = async () => {
     if (!tempService || !profile?.business_id) return;
-    if (saving) return; // Prevent multiple simultaneous saves
+    if (saving) return;
 
     try {
       setSaving(true);
@@ -332,7 +315,6 @@ export default function Services() {
       let err;
       let newServiceId = editingServiceId;
       if (isEditMode && editingServiceId) {
-        // UPDATE existing service - only update, never insert
         const { error } = await supabase
           .from("service")
           .update(serviceData)
@@ -341,7 +323,6 @@ export default function Services() {
 
         err = error;
       } else {
-        // INSERT new service - only insert, never update
         const { data: insertData, error } = await supabase
           .from("service")
           .insert([serviceData])
@@ -355,21 +336,6 @@ export default function Services() {
       }
 
       if (err) throw err;
-
-      // Save material-service links if we have a service ID and materials selected
-      if (newServiceId && selectedMaterialIds.length > 0 && !isEditMode) {
-        const links = selectedMaterialIds.map(materialId => ({
-          material_id: materialId,
-          service_id: newServiceId,
-          profile_id: profile.profile_id,
-        }));
-
-        const { error: linkError } = await supabase
-          .from("material_service_link")
-          .insert(links);
-
-        if (linkError) console.error("Error saving material links:", linkError);
-      }
 
       await fetchServices();
       closeModal();
@@ -411,7 +377,7 @@ export default function Services() {
         .from("service")
         .delete()
         .eq("service_id", serviceToDelete)
-        .eq("business_id", profile.business_id); // Ensure user can only delete their own services
+        .eq("business_id", profile.business_id);
 
       if (error) throw error;
 
@@ -516,14 +482,44 @@ export default function Services() {
                 />
               </div>
               <div className="p-3 flex-grow">
-                <div className="text-base font-bold mb-1">{s.title}</div>
-                <div className="text-xs text-zinc-400 line-clamp-2">
-                  {s.description}
+                <div className="text-base font-bold mb-2">{s.title}</div>
+                <div className="text-xs text-zinc-400">
+                  Labour: £{calculatePrice(s.hours)} ({s.hours}h)
                 </div>
-                <div className="text-xs text-zinc-400 mt-1">
-                  {s.hours} hours · £{calculatePrice(s.hours)}
+                <div className="text-xs text-zinc-400 mt-0.5">
+                  Materials: £{(serviceMaterialsTotals[s.service_id] || 0).toFixed(2)}
+                </div>
+                <div className="text-xs text-sky-400 font-bold mt-0.5">
+                  Total: £{(parseFloat(calculatePrice(s.hours)) + (serviceMaterialsTotals[s.service_id] || 0)).toFixed(2)}
                 </div>
               </div>
+
+              {/* Info button */}
+              {s.description && (
+                <div style={{ position: 'absolute', top: '8px', left: '8px' }}>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDescriptionPopup(s);
+                    }}
+                    style={{
+                      padding: '8px',
+                      background: 'rgba(0,0,0,0.55)',
+                      borderRadius: '9999px',
+                      border: 'none',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                    title="Description"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" style={{ height: '16px', width: '16px', color: '#e4e4e7' }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M12 2a10 10 0 110 20A10 10 0 0112 2z" />
+                    </svg>
+                  </button>
+                </div>
+              )}
 
               {/* Edit button */}
               <div style={{ position: 'absolute', top: '8px', right: '8px', display: 'flex', gap: '8px' }}>
@@ -593,104 +589,37 @@ export default function Services() {
         </div>
       )}
 
-      {/* MATERIALS SELECTION MODAL */}
-      {isMaterialsModalOpen && (
-        <div className="fixed inset-0 z-[60] bg-black/70 flex items-center justify-center p-4">
-          <div className="bg-zinc-900 rounded-2xl p-4 w-full max-w-3xl max-h-[75vh] overflow-hidden flex flex-col mx-4">
-            <h2 className="text-lg font-bold mb-4">Select Materials</h2>
-
-            {materialsLoading ? (
-              <div className="text-center py-8 text-zinc-400">Loading materials...</div>
-            ) : allMaterials.length === 0 ? (
-              <div className="text-center py-8 text-zinc-400">
-                No materials available. Add materials in Settings → Materials first.
-              </div>
-            ) : (
-              <>
-                <div className="flex-1 overflow-y-auto min-h-0 mb-4">
-                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
-                    {allMaterials.map((material) => (
-                      <div
-                        key={material.material_id}
-                        onClick={() => toggleMaterialSelection(material.material_id)}
-                        className={`relative rounded-xl border cursor-pointer transition overflow-hidden ${
-                          selectedMaterialIds.includes(material.material_id)
-                            ? "bg-sky-500/20 border-sky-500"
-                            : "bg-zinc-800 border-zinc-700 hover:bg-zinc-700"
-                        }`}
-                      >
-                        {/* Selection indicator */}
-                        <div className={`absolute top-2 right-2 z-10 w-5 h-5 rounded-full border flex items-center justify-center ${
-                          selectedMaterialIds.includes(material.material_id)
-                            ? "bg-sky-500 border-sky-500"
-                            : "bg-zinc-900/50 border-zinc-500"
-                        }`}>
-                          {selectedMaterialIds.includes(material.material_id) && (
-                            <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                            </svg>
-                          )}
-                        </div>
-
-                        <div className="h-10 w-full overflow-hidden">
-                          <img
-                            src={material.image_url}
-                            alt={material.name}
-                            className="h-full w-full object-cover"
-                          />
-                        </div>
-                        <div className="p-1 text-[10px]">
-                          <div className="font-bold text-xs truncate">{material.name}</div>
-                          <div className="text-[10px] text-zinc-400 truncate">
-                            £{material.base_price_no_vat} · {material.markup}%
-                          </div>
-                          <div className="text-[10px] text-sky-400 font-bold mt-1">
-                            £{(parseFloat(material.base_price_no_vat) * (1 + parseFloat(material.markup) / 100)).toFixed(2)}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Materials Summary */}
-                {selectedMaterialIds.length > 0 && (
-                  <div className="p-3 bg-zinc-800 rounded-xl mb-4 space-y-1 text-xs">
-                    <div className="flex justify-between text-zinc-400">
-                      <span>Materials ({selectedMaterialIds.length}):</span>
-                      <span>£{calculateMaterialsTotal().base}</span>
-                    </div>
-                    <div className="flex justify-between text-zinc-400">
-                      <span>Markup:</span>
-                      <span>£{calculateMaterialsTotal().markup}</span>
-                    </div>
-                    <div className="flex justify-between text-sky-400 font-bold pt-1 border-t border-zinc-700">
-                      <span>Total Materials:</span>
-                      <span>£{calculateMaterialsTotal().total}</span>
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
-
-            <div className="flex justify-end gap-3">
-              <button
-                onClick={closeMaterialsModal}
-                disabled={saving}
-                className="px-4 py-2 text-sm border border-zinc-600 rounded-xl hover:bg-zinc-800 disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={saveMaterialsSelection}
-                disabled={saving || materialsLoading}
-                className="px-4 py-2 text-sm bg-sky-400 text-black rounded-xl font-bold hover:bg-sky-300 disabled:opacity-50"
-              >
-                {saving ? "Saving..." : "Save"}
-              </button>
-            </div>
+      {/* DESCRIPTION POPUP */}
+      {descriptionPopup && (
+        <div
+          className="fixed inset-0 z-[90] bg-black/60 flex items-center justify-center p-6"
+          onClick={() => setDescriptionPopup(null)}
+        >
+          <div
+            className="bg-zinc-900 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-base font-bold mb-3">{descriptionPopup.title}</h3>
+            <p className="text-sm text-zinc-300 leading-relaxed">{descriptionPopup.description}</p>
+            <button
+              onClick={() => setDescriptionPopup(null)}
+              className="mt-4 px-4 py-2 text-sm border border-zinc-600 rounded-xl hover:bg-zinc-800 w-full"
+            >
+              Close
+            </button>
           </div>
         </div>
+      )}
+
+      {/* MATERIALS SERVICE LINK MODAL */}
+      {isMaterialsModalOpen && (
+        <MaterialServiceLink
+          isOpen={isMaterialsModalOpen}
+          onClose={closeMaterialsModal}
+          serviceId={isEditMode ? editingServiceId : null}
+          profile={profile}
+          onSave={(materialsTotal) => handleMaterialsSaved(materialsTotal)}
+        />
       )}
 
       {/* EDIT/ADD MODAL */}
@@ -755,14 +684,9 @@ export default function Services() {
                 <button
                   type="button"
                   onClick={openMaterialsModal}
-                  className="w-full p-2 rounded-xl bg-zinc-800 border border-zinc-700 text-white text-sm text-left flex justify-between items-center hover:bg-zinc-700 transition"
+                  className="w-full p-2 rounded-xl bg-sky-500/20 border border-sky-500 text-sky-400 text-sm font-bold hover:bg-sky-500/30 transition"
                 >
-                  <span className="truncate">{getSelectedMaterialsText()}</span>
-                  {selectedMaterialIds.length > 0 && (
-                    <span className="text-sky-400 font-bold text-xs ml-2">
-                      £{calculateMaterialsTotal().total}
-                    </span>
-                  )}
+                  Materials
                 </button>
               </div>
 
