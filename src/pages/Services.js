@@ -378,6 +378,15 @@ export default function Services() {
     try {
       setError(null);
 
+      // Remove all material links for this service first
+      const { error: linkError } = await supabase
+        .from("material_service_link")
+        .delete()
+        .eq("service_id", serviceToDelete)
+        .eq("business_id", profile.business_id);
+
+      if (linkError) throw linkError;
+
       const { error } = await supabase
         .from("service")
         .delete()
@@ -647,12 +656,12 @@ export default function Services() {
       {/* EDIT/ADD MODAL */}
       {isModalOpen && tempService && (
         <div className="fixed inset-0 z-40 bg-black/70 flex items-center justify-center p-4">
-          <div className="bg-zinc-900 rounded-2xl w-full max-w-md max-h-[90vh] flex flex-col">
-            <h2 className="text-lg font-bold px-5 pt-5 pb-3">
+          <div className="bg-zinc-900 rounded-2xl w-full max-w-md" style={{ height: '90vh', display: 'flex', flexDirection: 'column' }}>
+            <h2 className="text-lg font-bold px-5 pt-5 pb-3" style={{ flexShrink: 0 }}>
               {isEditMode ? "Edit Service" : "Add Service"}
             </h2>
 
-            <div className="flex-1 overflow-y-auto px-5 pb-3 space-y-3">
+            <div className="px-5 pb-3 space-y-3" style={{ flex: '1 1 0', overflowY: 'auto', minHeight: 0 }}>
               <div>
                 <label className="block text-xs text-zinc-400 mb-1">Service Title</label>
                 <input
@@ -688,34 +697,6 @@ export default function Services() {
                   }
                   placeholder="Enter estimated hours"
                 />
-              </div>
-
-              <div>
-                <label className="block text-xs text-zinc-400 mb-1">Service Image</label>
-                <div className="flex gap-2 items-center">
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => handleImageUpload(e.target.files[0])}
-                    className="flex-1 text-xs text-zinc-300"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleGenerateServiceImage}
-                    disabled={fetchingImage || !tempService?.title?.trim()}
-                    className="px-3 py-1.5 bg-zinc-700 text-white text-xs rounded-xl hover:bg-zinc-600 disabled:opacity-40 whitespace-nowrap"
-                    title="Search Pexels for an image using the service title"
-                  >
-                    {fetchingImage ? "Searching…" : "Generate Image"}
-                  </button>
-                </div>
-                {tempService?.image_url && (
-                  <img
-                    src={tempService.image_url}
-                    alt="preview"
-                    className="mt-2 w-full h-20 object-cover rounded-lg"
-                  />
-                )}
               </div>
 
               {/* Materials Selection Button */}
@@ -755,9 +736,37 @@ export default function Services() {
                   </div>
                 </div>
               )}
+
+              <div>
+                <label className="block text-xs text-zinc-400 mb-1">Service Image</label>
+                <div className="flex gap-2 items-center">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => handleImageUpload(e.target.files[0])}
+                    className="flex-1 text-xs text-zinc-300"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleGenerateServiceImage}
+                    disabled={fetchingImage || !tempService?.title?.trim()}
+                    className="px-3 py-1.5 bg-zinc-700 text-white text-xs rounded-xl hover:bg-zinc-600 disabled:opacity-40 whitespace-nowrap"
+                    title="Search Pexels for an image using the service title"
+                  >
+                    {fetchingImage ? "Searching…" : "Generate Image"}
+                  </button>
+                </div>
+                {tempService?.image_url && (
+                  <img
+                    src={tempService.image_url}
+                    alt="preview"
+                    className="mt-2 w-full h-20 object-cover rounded-lg"
+                  />
+                )}
+              </div>
             </div>
 
-            <div className="flex justify-between items-center px-5 py-4 border-t border-zinc-800">
+            <div className="flex justify-between items-center px-5 py-4 border-t border-zinc-800" style={{ flexShrink: 0 }}>
               {isEditMode && (
                 <button
                   onClick={() => openDeleteConfirm(editingServiceId)}

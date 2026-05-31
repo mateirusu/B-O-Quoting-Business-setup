@@ -28,9 +28,9 @@ export default function Materials() {
   const [fetchingImage, setFetchingImage] = useState(false);
   const pexelsPageRef = useRef(1);
   const [fetchError, setFetchError] = useState(null);
-  const [fetchSuccess, setFetchSuccess] = useState(null);
   const [refreshingAll, setRefreshingAll] = useState(false);
-  const [refreshProgress, setRefreshProgress] = useState(null);
+  const [refreshStatus, setRefreshStatus] = useState(null); // null | { total, remaining, done }
+  const refreshPollRef = useRef(null);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
@@ -39,6 +39,7 @@ export default function Materials() {
   const [imageFile, setImageFile] = useState(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [materialToDelete, setMaterialToDelete] = useState(null);
+  const [materialUsedBy, setMaterialUsedBy] = useState([]);
 
   // Fetch materials for the user's business
   const fetchMaterials = useCallback(async () => {
@@ -73,6 +74,53 @@ export default function Materials() {
       fetchMaterials();
     }
   }, [authLoading, profile?.business_id, fetchMaterials]);
+
+  useEffect(() => {
+    return () => { if (refreshPollRef.current) clearInterval(refreshPollRef.current); };
+  }, []);
+
+  const startPolling = useCallback(() => {
+    if (refreshPollRef.current) clearInterval(refreshPollRef.current);
+    refreshPollRef.current = setInterval(async () => {
+      const { count } = await supabase
+        .from('material')
+        .select('material_id', { count: 'exact', head: true })
+        .eq('business_id', profile.business_id)
+        .eq('price_refresh_queued', true);
+      const remaining = count ?? 0;
+      if (remaining === 0) {
+        clearInterval(refreshPollRef.current);
+        refreshPollRef.current = null;
+        localStorage.removeItem('price_refresh_running');
+        setRefreshStatus(prev => ({ ...prev, remaining: 0, done: true }));
+        fetchMaterials();
+      } else {
+        setRefreshStatus(prev => ({ ...prev, remaining }));
+      }
+    }, 10000);
+  }, [profile?.business_id, fetchMaterials]);
+
+  // On page load: check if a refresh is in progress or just finished
+  useEffect(() => {
+    if (authLoading || !profile?.business_id) return;
+    (async () => {
+      const { count } = await supabase
+        .from('material')
+        .select('material_id', { count: 'exact', head: true })
+        .eq('business_id', profile.business_id)
+        .eq('price_refresh_queued', true);
+      const remaining = count ?? 0;
+      const wasRunning = localStorage.getItem('price_refresh_running') === '1';
+      if (remaining > 0) {
+        localStorage.setItem('price_refresh_running', '1');
+        setRefreshStatus({ remaining, done: false });
+        startPolling();
+      } else if (wasRunning) {
+        localStorage.removeItem('price_refresh_running');
+        setRefreshStatus({ remaining: 0, done: true });
+      }
+    })();
+  }, [authLoading, profile?.business_id, startPolling]);
 
   const sanitizeNumberInput = (value) => {
     if (!value) return "";
@@ -123,7 +171,6 @@ export default function Materials() {
     setTempMaterial(null);
     setImageFile(null);
     setFetchError(null);
-    setFetchSuccess(null);
   };
 
   const uploadImage = async (file, userId) => {
@@ -210,7 +257,15 @@ export default function Materials() {
     }
   };
 
-  const openDeleteConfirm = (materialId) => {
+  const openDeleteConfirm = async (materialId) => {
+    const { data } = await supabase
+      .from("material_service_link")
+      .select("service:service_id(title)")
+      .eq("material_id", materialId)
+      .eq("business_id", profile.business_id);
+
+    const serviceNames = (data || []).map(row => row.service?.title).filter(Boolean);
+    setMaterialUsedBy(serviceNames);
     setMaterialToDelete(materialId);
     setIsModalOpen(false);
     setDeleteConfirmOpen(true);
@@ -220,12 +275,14 @@ export default function Materials() {
     setDeleteConfirmOpen(false);
     setIsModalOpen(true);
     setMaterialToDelete(null);
+    setMaterialUsedBy([]);
   };
 
   const closeDeleteAfterSuccess = () => {
     setDeleteConfirmOpen(false);
     setIsModalOpen(false);
     setMaterialToDelete(null);
+    setMaterialUsedBy([]);
     setEditingMaterialId(null);
     setTempMaterial(null);
   };
@@ -372,23 +429,17 @@ export default function Materials() {
     if (!tempMaterial?.supplier_url?.trim()) return;
     setFetchingUrl(true);
     setFetchError(null);
-    setFetchSuccess(null);
     try {
       const { name, price, code, supplier } = await fetchFromSupplierUrl(tempMaterial.supplier_url.trim());
       if (name || price !== null || code || supplier) {
         setTempMaterial(prev => ({
           ...prev,
-          ...(!prev.name && name ? { name } : {}),
+          ...(name ? { name } : {}),
           ...(price !== null ? { base_price_no_vat: String(price) } : {}),
-          ...(!prev.code && code ? { code } : {}),
-          ...(!prev.supplier && supplier ? { supplier } : {}),
+          ...(code ? { code } : {}),
+          ...(supplier ? { supplier } : {}),
+          // markup and image_url intentionally kept as-is
         }));
-        const parts = [];
-        if (price !== null) parts.push(`price £${price}`);
-        if (!tempMaterial.name && name) parts.push(`name "${name}"`);
-        if (!tempMaterial.code && code) parts.push(`code ${code}`);
-        if (!tempMaterial.supplier && supplier) parts.push(`supplier ${supplier}`);
-        setFetchSuccess(`Fetched: ${parts.join(', ')}${price === null ? ' (price not found)' : ''}`);
       } else {
         setFetchError("No product data found. This supplier's site likely loads prices with JavaScript, which can't be fetched automatically.");
       }
@@ -405,35 +456,40 @@ export default function Materials() {
     }
   };
 
-  // Go through every material that has a supplier URL and refresh its price
+  // Trigger a server-side background refresh — each material gets its own edge function
+  // invocation so there is no timeout limit regardless of catalog size.
   const refreshAllPrices = async () => {
     const withUrls = materials.filter(m => m.supplier_url);
     if (!withUrls.length) { setError("No materials have a supplier URL set."); return; }
 
     setRefreshingAll(true);
-    setRefreshProgress({ done: 0, total: withUrls.length, updated: 0 });
-    let updated = 0;
+    setRefreshStatus(null);
 
-    for (let i = 0; i < withUrls.length; i++) {
-      const mat = withUrls[i];
-      try {
-        const { price } = await fetchFromSupplierUrl(mat.supplier_url);
-        if (price !== null) {
-          await supabase
-            .from('material')
-            .update({ base_price_no_vat: price })
-            .eq('material_id', mat.material_id)
-            .eq('business_id', profile.business_id);
-          updated++;
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(
+        `${SUPABASE_URL}/functions/v1/start-price-refresh`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session?.access_token}`,
+            'apikey': SUPABASE_ANON_KEY,
+          },
         }
-      } catch {}
-      setRefreshProgress({ done: i + 1, total: withUrls.length, updated });
-    }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || 'Failed to start refresh');
 
-    await fetchMaterials();
-    setRefreshingAll(false);
-    setRefreshProgress(prev => ({ ...prev, done: prev.total }));
-    setTimeout(() => setRefreshProgress(null), 4000);
+      localStorage.setItem('price_refresh_running', '1');
+      setRefreshStatus({ total: data.total, remaining: data.total, done: false });
+      startPolling();
+
+    } catch (err) {
+      setError(`Could not start refresh: ${err.message}`);
+    } finally {
+      setRefreshingAll(false);
+    }
   };
 
   const filteredMaterials = materials.filter((m) =>
@@ -477,11 +533,16 @@ export default function Materials() {
         />
         <button
           onClick={refreshAllPrices}
-          disabled={refreshingAll}
-          className="px-4 py-3 bg-zinc-700 text-white rounded-xl font-bold whitespace-nowrap hover:bg-zinc-600 disabled:opacity-50 text-sm"
+          disabled={refreshingAll || (!!refreshStatus && !refreshStatus.done)}
+          className="px-4 py-3 rounded-xl font-bold whitespace-nowrap text-sm"
+          style={
+            refreshingAll || (refreshStatus && !refreshStatus.done)
+              ? { background: '#3f3f46', color: '#fff', opacity: 0.6, cursor: 'not-allowed' }
+              : { background: 'linear-gradient(135deg, #40c2ff, #2d98ff)', color: '#020617' }
+          }
           title="Fetch latest prices from supplier URLs"
         >
-          {refreshingAll ? `Refreshing ${refreshProgress?.done}/${refreshProgress?.total}…` : "Refresh Prices"}
+          {refreshingAll ? "Starting…" : (refreshStatus && !refreshStatus.done) ? "Refreshing…" : "Refresh Prices"}
         </button>
         <button
           onClick={openAddModal}
@@ -492,11 +553,17 @@ export default function Materials() {
       </div>
 
       {/* REFRESH PROGRESS */}
-      {refreshProgress && !refreshingAll && (
+      {refreshStatus && (
         <div className="bg-zinc-800 rounded-xl p-3 text-sm text-zinc-300">
-          Price refresh complete — updated <span className="text-sky-400 font-bold">{refreshProgress.updated}</span> of <span className="font-bold">{refreshProgress.total}</span> materials.
-          {refreshProgress.updated < refreshProgress.total && (
-            <span className="text-zinc-500 ml-2">(The rest may use JavaScript-rendered prices which can't be fetched automatically.)</span>
+          {refreshStatus.done ? (
+            <>Prices have been updated successfully.</>
+          ) : (
+            <>
+              Refreshing prices in the background —{" "}
+              <span className="text-sky-400 font-bold">{refreshStatus.remaining}</span>
+              {refreshStatus.total ? <>{" "}of <span className="font-bold">{refreshStatus.total}</span></> : null}
+              {" "}remaining. You can keep using the app or close this page.
+            </>
           )}
         </div>
       )}
@@ -531,16 +598,6 @@ export default function Materials() {
                 <div className="text-xs text-zinc-400 mt-1">
                   Base: £{m.base_price_no_vat} · Markup: {m.markup}% · £{calculatePriceWithMarkup(m.base_price_no_vat, m.markup)}
                 </div>
-                {m.code && (
-                  <div className="text-xs text-zinc-500 mt-1">
-                    Code: {m.code}
-                  </div>
-                )}
-                {m.supplier && (
-                  <div className="text-xs text-zinc-500">
-                    Supplier: {m.supplier}
-                  </div>
-                )}
                 {m.supplier_url && (
                   <a
                     href={m.supplier_url}
@@ -599,25 +656,51 @@ export default function Materials() {
         <div className="fixed inset-0 z-[100] bg-black/70 flex items-center justify-center p-4">
           <div className="bg-zinc-900 rounded-2xl p-5 w-full max-w-sm">
             <h2 className="text-lg font-bold mb-3">Delete Material</h2>
-            <p className="text-zinc-300 text-sm mb-5">
-              Are you sure? This cannot be undone.
-            </p>
-            <div className="flex justify-end gap-3">
-              <button
-                onClick={closeDeleteConfirm}
-                disabled={saving}
-                className="px-4 py-2 text-sm border border-zinc-600 rounded-xl hover:bg-zinc-800 disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={confirmDelete}
-                disabled={saving}
-                className="px-4 py-2 text-sm bg-red-500 text-white rounded-xl font-bold hover:bg-red-400 disabled:opacity-50"
-              >
-                {saving ? "Deleting..." : "Delete"}
-              </button>
-            </div>
+            {materialUsedBy.length > 0 ? (
+              <>
+                <p className="text-red-300 text-sm mb-3">
+                  This material cannot be deleted because it is used in the following service{materialUsedBy.length > 1 ? 's' : ''}:
+                </p>
+                <ul className="mb-5 space-y-1">
+                  {materialUsedBy.map((name, i) => (
+                    <li key={i} className="text-sm text-zinc-200 bg-zinc-800 rounded-lg px-3 py-1.5">
+                      {name}
+                    </li>
+                  ))}
+                </ul>
+                <p className="text-zinc-400 text-xs mb-5">Remove it from those services first, then delete it.</p>
+                <div className="flex justify-end">
+                  <button
+                    onClick={closeDeleteConfirm}
+                    className="px-4 py-2 text-sm border border-zinc-600 rounded-xl hover:bg-zinc-800"
+                  >
+                    OK
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-zinc-300 text-sm mb-5">
+                  Are you sure? This cannot be undone.
+                </p>
+                <div className="flex justify-end gap-3">
+                  <button
+                    onClick={closeDeleteConfirm}
+                    disabled={saving}
+                    className="px-4 py-2 text-sm border border-zinc-600 rounded-xl hover:bg-zinc-800 disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={confirmDelete}
+                    disabled={saving}
+                    className="px-4 py-2 text-sm bg-red-500 text-white rounded-xl font-bold hover:bg-red-400 disabled:opacity-50"
+                  >
+                    {saving ? "Deleting..." : "Delete"}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -625,16 +708,16 @@ export default function Materials() {
       {/* EDIT/ADD MODAL */}
       {isModalOpen && tempMaterial && (
         <div className="fixed inset-0 z-40 bg-black/70 flex items-center justify-center p-4">
-          <div className="bg-zinc-900 rounded-2xl w-full max-w-md flex flex-col" style={{ height: '90vh' }}>
+          <div className="bg-zinc-900 rounded-2xl w-full max-w-md" style={{ height: '90vh', display: 'flex', flexDirection: 'column' }}>
             {/* Sticky header */}
-            <div className="p-5 pb-3 flex-shrink-0">
+            <div className="p-5 pb-3" style={{ flexShrink: 0 }}>
               <h2 className="text-lg font-bold">
                 {isEditMode ? "Edit Material" : "Add Material"}
               </h2>
             </div>
 
             {/* Scrollable body */}
-            <div className="px-5 overflow-y-auto flex-1 min-h-0">
+            <div className="px-5" style={{ flex: '1 1 0', overflowY: 'auto', minHeight: 0 }}>
             <div className="space-y-3">
               <div>
                 <label className="block text-xs text-zinc-400 mb-1">Material Name</label>
@@ -698,7 +781,7 @@ export default function Materials() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs text-zinc-400 mb-1">Code (optional)</label>
+                  <label className="block text-xs text-zinc-400 mb-1">Code</label>
                   <input
                     className="w-full p-2 rounded-xl bg-zinc-950 border border-zinc-700 text-white text-sm"
                     value={tempMaterial.code}
@@ -707,7 +790,7 @@ export default function Materials() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-zinc-400 mb-1">Supplier (optional)</label>
+                  <label className="block text-xs text-zinc-400 mb-1">Supplier</label>
                   <input
                     className="w-full p-2 rounded-xl bg-zinc-950 border border-zinc-700 text-white text-sm"
                     value={tempMaterial.supplier}
@@ -723,7 +806,7 @@ export default function Materials() {
                   <input
                     className="flex-1 p-2 rounded-xl bg-zinc-950 border border-zinc-700 text-white text-sm"
                     value={tempMaterial.supplier_url}
-                    onChange={(e) => { handleChange("supplier_url", e.target.value); setFetchError(null); setFetchSuccess(null); }}
+                    onChange={(e) => { handleChange("supplier_url", e.target.value); setFetchError(null); }}
                     placeholder="https://supplier.com/product/..."
                   />
                   <button
@@ -732,7 +815,7 @@ export default function Materials() {
                     disabled={fetchingUrl || !tempMaterial.supplier_url?.trim()}
                     className="px-3 py-2 bg-sky-500/20 border border-sky-500 text-sky-400 text-sm rounded-xl hover:bg-sky-500/30 disabled:opacity-40 whitespace-nowrap"
                   >
-                    {fetchingUrl ? "Fetching… (up to 30s)" : "Fetch Details"}
+                    {fetchingUrl ? "Fetching…" : "Fetch Details"}
                   </button>
                 </div>
                 <div className="flex items-center justify-between mt-1">
@@ -750,11 +833,6 @@ export default function Materials() {
                 {fetchError && (
                   <div className="mt-2 p-2 bg-red-500/10 border border-red-500/50 rounded-lg text-xs text-red-300">
                     {fetchError}
-                  </div>
-                )}
-                {fetchSuccess && (
-                  <div className="mt-2 p-2 bg-green-500/10 border border-green-500/50 rounded-lg text-xs text-green-300">
-                    {fetchSuccess}
                   </div>
                 )}
               </div>
@@ -790,7 +868,7 @@ export default function Materials() {
             </div>
 
             {/* Sticky footer with action buttons */}
-            <div className="p-5 pt-4 flex-shrink-0 border-t border-zinc-800 flex justify-between items-center">
+            <div className="p-5 pt-4 border-t border-zinc-800 flex justify-between items-center" style={{ flexShrink: 0 }}>
               {isEditMode && (
                 <button
                   onClick={() => openDeleteConfirm(editingMaterialId)}

@@ -464,6 +464,14 @@ button.w-full {
   background: #3f3f46;
 }
 
+.bg-red-500 {
+  background: #ef4444;
+}
+
+.hover\:bg-red-400:hover {
+  background: #f87171;
+}
+
 /* Services Grid Layout */
 .services-grid {
   display: grid;
