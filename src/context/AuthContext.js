@@ -69,6 +69,7 @@ export function AuthProvider({ children }) {
     return () => listener?.subscription?.unsubscribe();
   }, [fetchProfile]);
 
+
   return (
     <AuthContext.Provider value={{ session, profile, loading, refreshProfile }}>
       {children}

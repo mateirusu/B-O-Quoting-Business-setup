@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "../context/AuthContext";
 import { supabase } from "../supabaseClient";
 import MaterialServiceLink from "./MaterialServiceLink";
+import { fetchPexelsImage } from "../utils/pexelsImage";
 
 export default function Services() {
   const { profile, loading: authLoading } = useAuth();
@@ -33,6 +34,8 @@ export default function Services() {
   const [tempService, setTempService] = useState(null);
   const [imageFile, setImageFile] = useState(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [fetchingImage, setFetchingImage] = useState(false);
+  const pexelsPageRef = useRef(1);
   const [serviceToDelete, setServiceToDelete] = useState(null);
   const [descriptionPopup, setDescriptionPopup] = useState(null);
 
@@ -150,6 +153,7 @@ export default function Services() {
     setImageFile(null);
     setSelectedMaterialIds([]);
     setServiceMaterialsTotal({ base: "0.00", markup: "0.00", total: "0.00" });
+    pexelsPageRef.current = 1;
     setIsModalOpen(true);
     fetchServiceMaterialsTotal(service.service_id);
   };
@@ -161,6 +165,7 @@ export default function Services() {
     setImageFile(null);
     setSelectedMaterialIds([]);
     setServiceMaterialsTotal({ base: "0.00", markup: "0.00", total: "0.00" });
+    pexelsPageRef.current = 1;
     setIsModalOpen(true);
   };
 
@@ -405,6 +410,23 @@ export default function Services() {
     reader.readAsDataURL(file);
   };
 
+  const handleGenerateServiceImage = async () => {
+    const query = tempService?.title?.trim();
+    if (!query) return;
+    setFetchingImage(true);
+    try {
+      const url = await fetchPexelsImage(query, pexelsPageRef.current);
+      if (url) {
+        setTempService(prev => ({ ...prev, image_url: url }));
+        pexelsPageRef.current += 1;
+      }
+    } catch {
+      // Non-critical — silently ignore
+    } finally {
+      setFetchingImage(false);
+    }
+  };
+
   const filteredServices = services.filter((s) =>
     s.title.toLowerCase().includes(search.toLowerCase())
   );
@@ -625,12 +647,12 @@ export default function Services() {
       {/* EDIT/ADD MODAL */}
       {isModalOpen && tempService && (
         <div className="fixed inset-0 z-40 bg-black/70 flex items-center justify-center p-4">
-          <div className="bg-zinc-900 rounded-2xl p-5 w-full max-w-md max-h-[90vh] overflow-y-auto">
-            <h2 className="text-lg font-bold mb-4">
+          <div className="bg-zinc-900 rounded-2xl w-full max-w-md max-h-[90vh] flex flex-col">
+            <h2 className="text-lg font-bold px-5 pt-5 pb-3">
               {isEditMode ? "Edit Service" : "Add Service"}
             </h2>
 
-            <div className="space-y-3">
+            <div className="flex-1 overflow-y-auto px-5 pb-3 space-y-3">
               <div>
                 <label className="block text-xs text-zinc-400 mb-1">Service Title</label>
                 <input
@@ -670,12 +692,30 @@ export default function Services() {
 
               <div>
                 <label className="block text-xs text-zinc-400 mb-1">Service Image</label>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={(e) => handleImageUpload(e.target.files[0])}
-                  className="w-full text-xs text-zinc-300"
-                />
+                <div className="flex gap-2 items-center">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => handleImageUpload(e.target.files[0])}
+                    className="flex-1 text-xs text-zinc-300"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleGenerateServiceImage}
+                    disabled={fetchingImage || !tempService?.title?.trim()}
+                    className="px-3 py-1.5 bg-zinc-700 text-white text-xs rounded-xl hover:bg-zinc-600 disabled:opacity-40 whitespace-nowrap"
+                    title="Search Pexels for an image using the service title"
+                  >
+                    {fetchingImage ? "Searching…" : "Generate Image"}
+                  </button>
+                </div>
+                {tempService?.image_url && (
+                  <img
+                    src={tempService.image_url}
+                    alt="preview"
+                    className="mt-2 w-full h-20 object-cover rounded-lg"
+                  />
+                )}
               </div>
 
               {/* Materials Selection Button */}
@@ -717,7 +757,7 @@ export default function Services() {
               )}
             </div>
 
-            <div className="flex justify-between items-center mt-5">
+            <div className="flex justify-between items-center px-5 py-4 border-t border-zinc-800">
               {isEditMode && (
                 <button
                   onClick={() => openDeleteConfirm(editingServiceId)}

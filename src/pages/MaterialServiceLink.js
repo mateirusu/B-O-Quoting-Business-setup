@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef } from "react"; // useCallback kept for fetchAllMaterials / fetchLinkedMaterials
 import { supabase } from "../supabaseClient";
 
 export default function MaterialServiceLink({
@@ -107,8 +107,10 @@ export default function MaterialServiceLink({
       setLinkedMaterials(transformed);
       setOriginalMaterials(transformed.map(m => ({...m}))); // Store copy of original data
     } catch (err) {
-      console.error("Error fetching linked materials:", err);
-      setError("Failed to load linked materials");
+      const msg = err.name === 'AbortError'
+        ? 'Loading timed out — please close and reopen this panel to retry.'
+        : 'Failed to load linked materials';
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -125,6 +127,26 @@ export default function MaterialServiceLink({
       }
     }
   }, [isOpen, serviceId, fetchAllMaterials, fetchLinkedMaterials]);
+
+  // Safety net: if loading is stuck, unblock after 8 seconds.
+  useEffect(() => {
+    if (!loading) return;
+    const timer = setTimeout(() => {
+      setLoading(false);
+      setError('Loading timed out — please close and reopen this panel.');
+    }, 8000);
+    return () => clearTimeout(timer);
+  }, [loading]);
+
+  // Safety net: if saving is stuck (e.g. previous request aborted mid-flight),
+  // force-reset after 12 seconds so the Update / Save buttons become clickable again.
+  useEffect(() => {
+    if (!saving) return;
+    const timer = setTimeout(() => {
+      setSaving(false);
+    }, 12000);
+    return () => clearTimeout(timer);
+  }, [saving]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -209,32 +231,19 @@ export default function MaterialServiceLink({
     ).slice(0, 8);
   };
 
-  // Update material in database - uses refs to avoid stale closure issues when switching browser tabs
-  const updateMaterial = useCallback(async (index) => {
-    if (savingRef.current) return;
-
-    const material = linkedMaterialsRef.current[index];
+  // Update material in database
+  const updateMaterial = async (index) => {
+    const material = linkedMaterials[index];
 
     if (!material?.materialId) {
-      console.error("No materialId found");
       setError("No material ID found for this item");
       return;
     }
 
     setSaving(true);
+    setError(null);
 
     try {
-      console.log("STEP 1 - About to send update", material);
-
-      // Check if we have a valid Supabase session before making the request
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-      if (sessionError || !session) {
-        console.error("Authentication issue:", sessionError || "No session");
-        setError("Please log in again to update materials");
-        setSaving(false);
-        return;
-      }
-
       const { data, error } = await supabase
         .from("material")
         .update({
@@ -245,23 +254,12 @@ export default function MaterialServiceLink({
         .eq("material_id", material.materialId)
         .select();
 
-      console.log("STEP 2 - Supabase returned", { data, error });
-
-      if (error) {
-        console.error("Supabase error:", error);
-        throw error;
-      }
+      if (error) throw error;
 
       if (!data || data.length === 0) {
-        console.error("No data returned from update");
-        setError("Update failed - no data returned");
-        setSaving(false);
-        return;
+        throw new Error("Update returned no rows — the material table may be missing an UPDATE RLS policy");
       }
 
-      console.log("Update successful", data[0]);
-
-      // Update local state to match the updated values
       const updatedMaterial = {
         ...material,
         name: data[0].name,
@@ -269,25 +267,19 @@ export default function MaterialServiceLink({
         markup: String(data[0].markup),
       };
 
-      setLinkedMaterials(prev =>
-        prev.map((m, i) =>
-          i === index ? updatedMaterial : m
-        )
-      );
-
-      setOriginalMaterials(prev =>
-        prev.map((m, i) =>
-          i === index ? updatedMaterial : m
-        )
-      );
+      setLinkedMaterials(prev => prev.map((m, i) => i === index ? updatedMaterial : m));
+      setOriginalMaterials(prev => prev.map((m, i) => i === index ? updatedMaterial : m));
 
     } catch (err) {
-      console.error("Update failed:", err);
-      setError(err.message || "Failed to update material");
+      setError(
+        err.name === 'AbortError'
+          ? 'Request timed out — please try again'
+          : err.message || "Failed to update material"
+      );
     } finally {
       setSaving(false);
     }
-  }, []);
+  };
 
   // Add new material to database
   const addNewMaterialToDb = async (materialData, linkToService = true) => {
