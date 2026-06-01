@@ -18,6 +18,8 @@ export default function MaterialServiceLink({
   const [originalMaterials, setOriginalMaterials] = useState([]);
   const [dragIndex, setDragIndex] = useState(null);
   const [dragOverIndex, setDragOverIndex] = useState(null);
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
+  const [pendingDeleteLinkIds, setPendingDeleteLinkIds] = useState([]);
   
   // Use refs to always have access to the latest state
   const linkedMaterialsRef = useRef(linkedMaterials);
@@ -85,10 +87,15 @@ export default function MaterialServiceLink({
             base_price_no_vat,
             markup,
             image_url,
-            business_id
+            business_id,
+            code,
+            supplier,
+            supplier_url
           )
         `)
-        .eq("service_id", serviceId);
+        .eq("service_id", serviceId)
+        .eq("business_id", profile.business_id)
+        .order("sort_order", { ascending: true, nullsFirst: false });
 
       if (error) throw error;
 
@@ -102,6 +109,9 @@ export default function MaterialServiceLink({
         markup: String(link.material?.markup ?? "0"),
         imageUrl: link.material?.image_url || "",
         businessId: link.material?.business_id || profile?.business_id,
+        code: link.material?.code || "",
+        supplier: link.material?.supplier || "",
+        supplierUrl: link.material?.supplier_url || "",
       }));
 
       setLinkedMaterials(transformed);
@@ -118,6 +128,7 @@ export default function MaterialServiceLink({
 
   useEffect(() => {
     if (isOpen) {
+      setPendingDeleteLinkIds([]);
       fetchAllMaterials();
       if (serviceId) {
         fetchLinkedMaterials();
@@ -202,17 +213,33 @@ export default function MaterialServiceLink({
 
   // Select material from dropdown
   const selectMaterial = (index, material) => {
-    const updated = [...linkedMaterials];
-    updated[index] = {
-      ...updated[index],
+    const selectedData = {
+      ...linkedMaterials[index],
       materialId: material.material_id,
       name: material.name,
-      basePrice: material.base_price_no_vat,
-      markup: material.markup,
+      basePrice: String(material.base_price_no_vat ?? "0"),
+      markup: String(material.markup ?? "0"),
       imageUrl: material.image_url,
       businessId: material.business_id,
+      code: material.code || "",
+      supplier: material.supplier || "",
+      supplierUrl: material.supplier_url || "",
     };
+
+    const updated = [...linkedMaterials];
+    updated[index] = selectedData;
     setLinkedMaterials(updated);
+
+    // For new rows originalMaterials has no entry at this index.
+    // Record the baseline now so isMaterialModified can detect subsequent edits
+    // and the Update button appears when the user changes a field.
+    if (!originalMaterials[index]) {
+      const updatedOriginals = [...originalMaterials];
+      while (updatedOriginals.length <= index) updatedOriginals.push(null);
+      updatedOriginals[index] = { ...selectedData };
+      setOriginalMaterials(updatedOriginals);
+    }
+
     setActiveDropdownIndex(null);
     setDropdownSearchQuery("");
   };
@@ -224,7 +251,8 @@ export default function MaterialServiceLink({
       .filter((m, i) => i !== currentIndex && m.materialId)
       .map(m => m.materialId);
     
-    return allMaterials.filter(m => 
+    return allMaterials.filter(m =>
+      m.business_id === profile?.business_id &&
       m.name.toLowerCase().includes((searchQuery || "").toLowerCase()) &&
       m.material_id !== currentMaterialId &&
       !linkedMaterialIds.includes(m.material_id)
@@ -282,7 +310,7 @@ export default function MaterialServiceLink({
   };
 
   // Add new material to database
-  const addNewMaterialToDb = async (materialData, linkToService = true) => {
+  const addNewMaterialToDb = async (materialData, linkToService = true, sortOrder = 0) => {
     try {
       setSaving(true);
 
@@ -314,6 +342,7 @@ export default function MaterialServiceLink({
               service_id: serviceId,
               business_id: profile.business_id,
               quantity: materialData.quantity || 1,
+              sort_order: sortOrder,
             },
           ]);
 
@@ -330,33 +359,14 @@ export default function MaterialServiceLink({
     }
   };
 
-  // Remove material from service
-  const removeMaterial = async (index) => {
+  // Remove material from service — deferred: DB delete happens only on Save
+  const removeMaterial = (index) => {
     const material = linkedMaterials[index];
-
-    try {
-      setSaving(true);
-
-      if (material.linkId) {
-        const { error } = await supabase
-          .from("material_service_link")
-          .delete()
-          .eq("link_id", material.linkId);
-
-        if (error) throw error;
-      }
-
-      // Remove from local state
-      const updated = linkedMaterials.filter((_, i) => i !== index);
-      const updatedOriginal = originalMaterials.filter((_, i) => i !== index);
-      setLinkedMaterials(updated);
-      setOriginalMaterials(updatedOriginal);
-    } catch (err) {
-      console.error("Error removing material:", err);
-      setError("Failed to remove material");
-    } finally {
-      setSaving(false);
+    if (material.linkId) {
+      setPendingDeleteLinkIds(prev => [...prev, material.linkId]);
     }
+    setLinkedMaterials(prev => prev.filter((_, i) => i !== index));
+    setOriginalMaterials(prev => prev.filter((_, i) => i !== index));
   };
 
   // Add empty row for new material
@@ -411,8 +421,12 @@ export default function MaterialServiceLink({
     setDragOverIndex(null);
   };
 
-  // Save all changes
-  const saveChanges = async () => {
+  // Returns true if any existing (DB) material has had name/price/markup changed
+  const hasModifiedExistingMaterials = () =>
+    linkedMaterials.some((m, i) => m.materialId && isMaterialModified(i));
+
+  // Save all changes — mode: 'update' edits existing records, 'create-new' duplicates them
+  const saveChanges = async (mode = 'update') => {
     if (!serviceId) {
       onClose();
       return;
@@ -422,61 +436,103 @@ export default function MaterialServiceLink({
       setSaving(true);
       setError(null);
 
+      // Commit deferred removals
+      for (const linkId of pendingDeleteLinkIds) {
+        const { error } = await supabase
+          .from("material_service_link")
+          .delete()
+          .eq("link_id", linkId);
+        if (error) throw error;
+      }
+
       for (let i = 0; i < linkedMaterials.length; i++) {
         const material = linkedMaterials[i];
         const original = originalMaterials[i];
 
         if (!material.materialId && !material.name.trim()) continue;
 
-        if (material.linkId) {
-          // Existing link — always update quantity
+        const isModified = material.materialId && isMaterialModified(i);
+
+        if (mode === 'create-new' && isModified) {
+          // Create a new material record with the edited values
+          const { data: newMat, error: newMatErr } = await supabase
+            .from("material")
+            .insert([{
+              name: material.name,
+              base_price_no_vat: parseFloat(material.basePrice) || 0,
+              markup: parseFloat(material.markup) || 0,
+              image_url: material.imageUrl || "https://images.unsplash.com/photo-1581090464777-f3220bbe1b8b?q=80&w=1200&auto=format&fit=crop",
+              business_id: profile.business_id,
+              code: material.code || null,
+              supplier: material.supplier || null,
+              supplier_url: material.supplierUrl || null,
+            }])
+            .select()
+            .maybeSingle();
+          if (newMatErr) throw newMatErr;
+
+          if (material.linkId) {
+            // Redirect existing link to the new material
+            const { error: linkErr } = await supabase
+              .from("material_service_link")
+              .update({ material_id: newMat.material_id, quantity: parseInt(material.quantity) || 1, sort_order: i })
+              .eq("link_id", material.linkId);
+            if (linkErr) throw linkErr;
+          } else {
+            // Create a new link for the new material
+            const { error: linkErr } = await supabase
+              .from("material_service_link")
+              .insert([{ material_id: newMat.material_id, service_id: serviceId, business_id: profile.business_id, quantity: parseInt(material.quantity) || 1, sort_order: i }]);
+            if (linkErr) throw linkErr;
+          }
+        } else if (material.linkId) {
+          // Existing link — update quantity and sort order
           const qty = parseInt(material.quantity) || 1;
           const { error: linkError } = await supabase
             .from("material_service_link")
-            .update({ quantity: qty })
+            .update({ quantity: qty, sort_order: i })
             .eq("link_id", material.linkId);
           if (linkError) throw linkError;
 
-          // Update material properties if changed
-          if (material.materialId && original) {
-            const materialChanged =
-              material.name !== original.name ||
-              material.basePrice !== original.basePrice ||
-              material.markup !== original.markup;
-
-            if (materialChanged) {
-              const { error: matError } = await supabase
-                .from("material")
-                .update({
-                  name: material.name,
-                  base_price_no_vat: parseFloat(material.basePrice) || 0,
-                  markup: parseFloat(material.markup) || 0,
-                })
-                .eq("material_id", material.materialId);
-              if (matError) throw matError;
-            }
+          // Update material record if changed (update mode only)
+          if (mode === 'update' && isModified) {
+            const { error: matError } = await supabase
+              .from("material")
+              .update({
+                name: material.name,
+                base_price_no_vat: parseFloat(material.basePrice) || 0,
+                markup: parseFloat(material.markup) || 0,
+              })
+              .eq("material_id", material.materialId);
+            if (matError) throw matError;
           }
         } else if (material.materialId) {
-          // New link for existing material
+          // New link for an existing (unmodified) material
           const qty = parseInt(material.quantity) || 1;
+
+          // If update mode and the material was changed, update its record first
+          if (mode === 'update' && isModified) {
+            const { error: matError } = await supabase
+              .from("material")
+              .update({
+                name: material.name,
+                base_price_no_vat: parseFloat(material.basePrice) || 0,
+                markup: parseFloat(material.markup) || 0,
+              })
+              .eq("material_id", material.materialId);
+            if (matError) throw matError;
+          }
+
           const { error } = await supabase
             .from("material_service_link")
-            .insert([
-              {
-                material_id: material.materialId,
-                service_id: serviceId,
-                business_id: profile.business_id,
-                quantity: qty,
-              },
-            ]);
+            .insert([{ material_id: material.materialId, service_id: serviceId, business_id: profile.business_id, quantity: qty, sort_order: i }]);
           if (error) throw error;
         } else if (material.name.trim()) {
-          // New material — create and link
-          await addNewMaterialToDb(material, true);
+          // Brand-new material typed by the user — create and link
+          await addNewMaterialToDb(material, true, i);
         }
       }
 
-      await fetchLinkedMaterials();
       if (onSave) {
         const materialsTotal = calculateMaterialsTotal();
         onSave(materialsTotal);
@@ -522,21 +578,26 @@ export default function MaterialServiceLink({
 
   return (
     <div className="fixed inset-0 z-[70] bg-black/70 flex items-center justify-center p-4">
-      <div className="bg-zinc-900 rounded-2xl p-5 w-full max-w-4xl max-h-[85vh] overflow-hidden flex flex-col">
-        <h2 className="text-lg font-bold mb-4">Materials for this Service</h2>
+      <div className="bg-zinc-900 rounded-2xl w-full max-w-4xl" style={{ height: '85vh', display: 'flex', flexDirection: 'column' }}>
 
-        {error && (
-          <div className="bg-red-500/10 border border-red-500 rounded-xl p-3 text-red-200 text-sm mb-4">
-            {error}
-          </div>
-        )}
+        {/* Sticky header */}
+        <div className="px-5 pt-5 pb-3" style={{ flexShrink: 0 }}>
+          <h2 className="text-lg font-bold">Materials for this Service</h2>
+          {error && (
+            <div className="bg-red-500/10 border border-red-500 rounded-xl p-3 text-red-200 text-sm mt-3">
+              {error}
+            </div>
+          )}
+        </div>
 
+        {/* Scrollable body */}
+        <div className="px-5" style={{ flex: '1 1 0', overflowY: 'auto', minHeight: 0 }}>
         {loading ? (
           <div className="text-center py-8 text-zinc-400">Loading...</div>
         ) : (
           <>
             {/* Materials Table */}
-            <div className="flex-1 overflow-auto min-h-0 mb-4">
+            <div className="mb-4">
               <table className="w-full text-sm table-fixed">
                 <colgroup>
                   <col style={{ width: '28px' }} />
@@ -739,9 +800,10 @@ export default function MaterialServiceLink({
             )}
           </>
         )}
+        </div>{/* end scrollable body */}
 
-        {/* Actions */}
-        <div className="flex justify-end gap-3 pt-4 border-t border-zinc-800">
+        {/* Sticky footer */}
+        <div className="flex justify-end gap-3 px-5 py-4 border-t border-zinc-800" style={{ flexShrink: 0 }}>
           <button
             onClick={onClose}
             disabled={saving}
@@ -750,7 +812,13 @@ export default function MaterialServiceLink({
             Cancel
           </button>
           <button
-            onClick={saveChanges}
+            onClick={() => {
+              if (hasModifiedExistingMaterials()) {
+                setShowSaveDialog(true);
+              } else {
+                saveChanges('update');
+              }
+            }}
             disabled={saving}
             className="px-4 py-2 text-sm bg-sky-400 text-black rounded-xl font-bold hover:bg-sky-300 disabled:opacity-50"
           >
@@ -758,6 +826,49 @@ export default function MaterialServiceLink({
           </button>
         </div>
       </div>
+
+      {/* Save mode dialog — shown when existing materials have been edited */}
+      {showSaveDialog && (
+        <div className="fixed inset-0 z-[90] bg-black/70 flex items-center justify-center p-4">
+          <div className="bg-zinc-900 rounded-2xl p-6 w-full max-w-lg">
+            <h3 className="text-base font-bold mb-3">Material Changes Detected</h3>
+            <p className="text-sm text-zinc-300 mb-4">
+              You've edited one or more materials that may be used by other services. How would you like to proceed?
+            </p>
+            <ul className="text-sm text-zinc-400 mb-5 space-y-2">
+              <li>
+                <span className="text-white font-semibold">Update Materials</span> — apply your changes to the existing materials. Every service using these materials will be affected.
+              </li>
+              <li>
+                <span className="text-white font-semibold">Create New Materials</span> — duplicate the changed materials with the new details for this service only. Other services keep the originals unchanged.
+              </li>
+              <li>
+                <span className="text-white font-semibold">Cancel</span> — go back and use the individual <em>Update</em> button on each row to update materials one at a time.
+              </li>
+            </ul>
+            <div className="flex flex-wrap gap-3 justify-end">
+              <button
+                onClick={() => setShowSaveDialog(false)}
+                className="px-4 py-2 text-sm border border-zinc-600 rounded-xl hover:bg-zinc-800"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => { setShowSaveDialog(false); saveChanges('create-new'); }}
+                className="px-4 py-2 text-sm bg-zinc-700 text-white rounded-xl font-bold hover:bg-zinc-600"
+              >
+                Create New Materials
+              </button>
+              <button
+                onClick={() => { setShowSaveDialog(false); saveChanges('update'); }}
+                className="px-4 py-2 text-sm bg-sky-400 text-black rounded-xl font-bold hover:bg-sky-300"
+              >
+                Update Materials
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

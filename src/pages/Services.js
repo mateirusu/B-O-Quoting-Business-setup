@@ -31,6 +31,7 @@ export default function Services() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
   const [editingServiceId, setEditingServiceId] = useState(null);
+  const [serviceAutoCreated, setServiceAutoCreated] = useState(false);
   const [tempService, setTempService] = useState(null);
   const [imageFile, setImageFile] = useState(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
@@ -173,14 +174,77 @@ export default function Services() {
     setIsModalOpen(false);
     setIsEditMode(false);
     setEditingServiceId(null);
+    setServiceAutoCreated(false);
     setTempService(null);
     setImageFile(null);
     setSelectedMaterialIds([]);
   };
 
+  // Called only by the Cancel button — cleans up an auto-created service before closing.
+  const handleCancelModal = async () => {
+    if (serviceAutoCreated && editingServiceId) {
+      await supabase
+        .from("material_service_link")
+        .delete()
+        .eq("service_id", editingServiceId)
+        .eq("business_id", profile.business_id);
+      await supabase
+        .from("service")
+        .delete()
+        .eq("service_id", editingServiceId)
+        .eq("business_id", profile.business_id);
+      await fetchServices();
+    }
+    closeModal();
+  };
+
   // Materials modal handlers
-  const openMaterialsModal = () => {
-    setIsModalOpen(false); // Close the service modal first
+  const openMaterialsModal = async () => {
+    // If this is a new (unsaved) service, save it first to get a service_id
+    // so that MaterialServiceLink can create material_service_link records.
+    if (!editingServiceId) {
+      if (!tempService?.title?.trim()) {
+        setError("Please enter a service title before assigning materials.");
+        return;
+      }
+      try {
+        setSaving(true);
+        setError(null);
+
+        let imageUrl = tempService.image_url;
+        if (imageFile) {
+          const { data: { user } } = await supabase.auth.getUser();
+          if (user) imageUrl = await uploadImage(imageFile, user.id);
+        }
+
+        const { data: insertData, error } = await supabase
+          .from("service")
+          .insert([{
+            title: tempService.title,
+            description: tempService.description,
+            hours: parseFloat(tempService.hours) || 0,
+            image_url: imageUrl,
+            business_id: profile.business_id,
+          }])
+          .select()
+          .maybeSingle();
+
+        if (error) throw error;
+
+        setEditingServiceId(insertData.service_id);
+        setIsEditMode(true);
+        setServiceAutoCreated(true);
+        await fetchServices();
+      } catch (err) {
+        setError(err.message || "Failed to save service");
+        setSaving(false);
+        return;
+      } finally {
+        setSaving(false);
+      }
+    }
+
+    setIsModalOpen(false);
     setIsMaterialsModalOpen(true);
   };
 
@@ -647,7 +711,7 @@ export default function Services() {
         <MaterialServiceLink
           isOpen={isMaterialsModalOpen}
           onClose={closeMaterialsModal}
-          serviceId={isEditMode ? editingServiceId : null}
+          serviceId={editingServiceId}
           profile={profile}
           onSave={(materialsTotal) => handleMaterialsSaved(materialsTotal)}
         />
@@ -658,7 +722,7 @@ export default function Services() {
         <div className="fixed inset-0 z-40 bg-black/70 flex items-center justify-center p-4">
           <div className="bg-zinc-900 rounded-2xl w-full max-w-md" style={{ height: '90vh', display: 'flex', flexDirection: 'column' }}>
             <h2 className="text-lg font-bold px-5 pt-5 pb-3" style={{ flexShrink: 0 }}>
-              {isEditMode ? "Edit Service" : "Add Service"}
+              {isEditMode && !serviceAutoCreated ? "Edit Service" : "Add Service"}
             </h2>
 
             <div className="px-5 pb-3 space-y-3" style={{ flex: '1 1 0', overflowY: 'auto', minHeight: 0 }}>
@@ -705,7 +769,12 @@ export default function Services() {
                 <button
                   type="button"
                   onClick={openMaterialsModal}
-                  className="w-full p-2 rounded-xl bg-sky-500/20 border border-sky-500 text-sky-400 text-sm font-bold hover:bg-sky-500/30 transition"
+                  disabled={!editingServiceId && !tempService?.title?.trim()}
+                  className={`w-full p-2 rounded-xl text-sm font-bold transition ${
+                    !editingServiceId && !tempService?.title?.trim()
+                      ? 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
+                      : 'bg-sky-400 text-black hover:bg-sky-300'
+                  }`}
                 >
                   Materials
                 </button>
@@ -767,7 +836,7 @@ export default function Services() {
             </div>
 
             <div className="flex justify-between items-center px-5 py-4 border-t border-zinc-800" style={{ flexShrink: 0 }}>
-              {isEditMode && (
+              {isEditMode && !serviceAutoCreated && (
                 <button
                   onClick={() => openDeleteConfirm(editingServiceId)}
                   disabled={saving}
@@ -776,9 +845,9 @@ export default function Services() {
                   Delete
                 </button>
               )}
-              <div className={`flex gap-3 ${isEditMode ? '' : 'ml-auto'}`}>
+              <div className={`flex gap-3 ${isEditMode && !serviceAutoCreated ? '' : 'ml-auto'}`}>
                 <button
-                  onClick={closeModal}
+                  onClick={handleCancelModal}
                   disabled={saving}
                   className="px-4 py-2 text-sm border border-zinc-600 rounded-xl hover:bg-zinc-800 disabled:opacity-50"
                 >

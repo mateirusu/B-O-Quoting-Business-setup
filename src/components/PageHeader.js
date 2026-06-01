@@ -23,7 +23,13 @@ export default function PageHeader({ title, subtitle }) {
         {subtitle && <p className="text-slate-400 mt-1">{subtitle}</p>}
       </div>
 
-      <div className="relative">
+      <div className="flex items-center gap-2">
+        {(profile?.first_name || profile?.last_name) && (
+          <span className="text-sm text-slate-300">
+            {[profile.first_name, profile.last_name].filter(Boolean).join(' ')}
+          </span>
+        )}
+        <div className="relative">
         <button
           onClick={() => setMenuOpen((open) => !open)}
           className="w-10 h-10 rounded-full bg-sky-400 text-black font-bold flex items-center justify-center"
@@ -83,6 +89,7 @@ export default function PageHeader({ title, subtitle }) {
             </button>
           </div>
         )}
+        </div>
       </div>
     </div>
   );

@@ -31,6 +31,7 @@ export default function Materials() {
   const [refreshingAll, setRefreshingAll] = useState(false);
   const [refreshStatus, setRefreshStatus] = useState(null); // null | { total, remaining, done }
   const refreshPollRef = useRef(null);
+  const [showRefreshDisclaimer, setShowRefreshDisclaimer] = useState(false);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
@@ -456,6 +457,94 @@ export default function Materials() {
     }
   };
 
+  const handleRefreshConfirm = async () => {
+    setShowRefreshDisclaimer(false);
+    setRefreshingAll(true);
+    setRefreshStatus(null);
+    setError(null);
+
+    try {
+      const withUrls = materials.filter(m => m.supplier_url?.trim());
+      if (!withUrls.length) {
+        setError("No materials have a supplier URL set.");
+        return;
+      }
+
+      // Group by normalised URL to find duplicates
+      const byUrl = {};
+      for (const m of withUrls) {
+        const key = m.supplier_url.trim().toLowerCase();
+        if (!byUrl[key]) byUrl[key] = [];
+        byUrl[key].push(m);
+      }
+
+      // Deduplicate: keep the oldest, re-point links, delete the rest
+      for (const group of Object.values(byUrl)) {
+        if (group.length <= 1) continue;
+        group.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+        const keeper = group[0];
+
+        for (const dup of group.slice(1)) {
+          // Fetch all service links for this duplicate
+          const { data: dupLinks } = await supabase
+            .from('material_service_link')
+            .select('link_id, service_id')
+            .eq('material_id', dup.material_id)
+            .eq('business_id', profile.business_id);
+
+          for (const link of (dupLinks || [])) {
+            // If keeper is already linked to this service, just remove the duplicate link
+            const { data: existing } = await supabase
+              .from('material_service_link')
+              .select('link_id')
+              .eq('material_id', keeper.material_id)
+              .eq('service_id', link.service_id)
+              .eq('business_id', profile.business_id)
+              .maybeSingle();
+
+            if (existing) {
+              await supabase.from('material_service_link').delete().eq('link_id', link.link_id);
+            } else {
+              await supabase.from('material_service_link').update({ material_id: keeper.material_id }).eq('link_id', link.link_id);
+            }
+          }
+
+          const { error: delErr } = await supabase
+            .from('material')
+            .delete()
+            .eq('material_id', dup.material_id)
+            .eq('business_id', profile.business_id);
+          if (delErr) throw delErr;
+        }
+      }
+
+      // Start the background price refresh
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(
+        `${SUPABASE_URL}/functions/v1/start-price-refresh`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session?.access_token}`,
+            'apikey': SUPABASE_ANON_KEY,
+          },
+        }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || 'Failed to start refresh');
+
+      localStorage.setItem('price_refresh_running', '1');
+      setRefreshStatus({ total: data.total, remaining: data.total, done: false });
+      startPolling();
+      await fetchMaterials();
+    } catch (err) {
+      setError(`Refresh failed: ${err.message}`);
+    } finally {
+      setRefreshingAll(false);
+    }
+  };
+
   // Trigger a server-side background refresh — each material gets its own edge function
   // invocation so there is no timeout limit regardless of catalog size.
   const refreshAllPrices = async () => {
@@ -532,7 +621,7 @@ export default function Materials() {
           className="w-full p-3 rounded-xl bg-zinc-900 border border-zinc-700"
         />
         <button
-          onClick={refreshAllPrices}
+          onClick={() => setShowRefreshDisclaimer(true)}
           disabled={refreshingAll || (!!refreshStatus && !refreshStatus.done)}
           className="px-4 py-3 rounded-xl font-bold whitespace-nowrap text-sm"
           style={
@@ -542,7 +631,7 @@ export default function Materials() {
           }
           title="Fetch latest prices from supplier URLs"
         >
-          {refreshingAll ? "Starting…" : (refreshStatus && !refreshStatus.done) ? "Refreshing…" : "Refresh Prices"}
+          {refreshingAll ? "Starting…" : (refreshStatus && !refreshStatus.done) ? "Refreshing…" : "Refresh Materials"}
         </button>
         <button
           onClick={openAddModal}
@@ -648,6 +737,38 @@ export default function Materials() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* REFRESH DISCLAIMER MODAL */}
+      {showRefreshDisclaimer && (
+        <div className="fixed inset-0 z-[100] bg-black/70 flex items-center justify-center p-4">
+          <div className="bg-zinc-900 rounded-2xl p-6 w-full max-w-md">
+            <h3 className="text-base font-bold mb-3">Refresh Materials</h3>
+            <p className="text-sm text-zinc-300 mb-3">Before continuing, please note:</p>
+            <ul className="text-sm text-zinc-400 mb-5 space-y-2 list-disc list-inside">
+              <li>
+                <span className="text-white font-semibold">Only materials with a supplier URL</span> will be refreshed. Materials without a URL are skipped.
+              </li>
+              <li>
+                <span className="text-white font-semibold">Duplicate materials</span> — those sharing the same supplier URL — will be consolidated. Only one will be kept, and any services using the removed materials will be updated automatically.
+              </li>
+            </ul>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setShowRefreshDisclaimer(false)}
+                className="px-4 py-2 text-sm border border-zinc-600 rounded-xl hover:bg-zinc-800"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleRefreshConfirm}
+                className="px-4 py-2 text-sm bg-sky-400 text-black rounded-xl font-bold hover:bg-sky-300"
+              >
+                Confirm
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
