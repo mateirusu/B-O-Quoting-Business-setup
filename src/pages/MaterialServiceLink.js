@@ -855,7 +855,7 @@ export default function MaterialServiceLink({
               </button>
               <button
                 onClick={() => { setShowSaveDialog(false); saveChanges('create-new'); }}
-                className="px-4 py-2 text-sm bg-zinc-700 text-white rounded-xl font-bold hover:bg-zinc-600"
+                className="px-4 py-2 text-sm bg-sky-400 text-black rounded-xl font-bold hover:bg-sky-300"
               >
                 Create New Materials
               </button>

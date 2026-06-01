@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Eye, EyeOff } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY } from "../supabaseClient";
 
@@ -17,6 +18,18 @@ export default function Profile() {
   const [error, setError] = useState(null);
   const [showConfirm, setShowConfirm] = useState(false);
   const [pendingEmailChange, setPendingEmailChange] = useState(null); // new email awaiting confirmation
+
+  // Change-password modal
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [oldPassword, setOldPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showOldPw, setShowOldPw] = useState(false);
+  const [showNewPw, setShowNewPw] = useState(false);
+  const [showConfirmPw, setShowConfirmPw] = useState(false);
+  const [passwordError, setPasswordError] = useState(null);
+  const [passwordSaving, setPasswordSaving] = useState(false);
+  const [passwordSuccess, setPasswordSuccess] = useState(null);
 
   useEffect(() => {
     setFirstName(profile?.first_name ?? "");
@@ -165,6 +178,85 @@ export default function Profile() {
 
   const canSave = isDirty && !emailError && !mobileError;
 
+  const pwCriteria = [
+    { label: "At least 8 characters",         met: newPassword.length >= 8 },
+    { label: "At least one uppercase letter",  met: /[A-Z]/.test(newPassword) },
+    { label: "At least one lowercase letter",  met: /[a-z]/.test(newPassword) },
+    { label: "At least one number",            met: /[0-9]/.test(newPassword) },
+    { label: "At least one special character", met: /[^A-Za-z0-9]/.test(newPassword) },
+    { label: "Different from old password",    met: newPassword.length > 0 && newPassword !== oldPassword },
+  ];
+
+  const pwValid = pwCriteria.every(c => c.met);
+
+  const closePasswordModal = () => {
+    setShowPasswordModal(false);
+    setOldPassword("");
+    setNewPassword("");
+    setConfirmPassword("");
+    setShowOldPw(false);
+    setShowNewPw(false);
+    setShowConfirmPw(false);
+    setPasswordError(null);
+    setPasswordSuccess(null);
+  };
+
+  const handleChangePassword = async () => {
+    setPasswordError(null);
+    if (!oldPassword) { setPasswordError("Please enter your current password."); return; }
+    if (!pwValid) { setPasswordError("New password does not meet all the requirements."); return; }
+    if (newPassword !== confirmPassword) { setPasswordError("New passwords do not match."); return; }
+
+    setPasswordSaving(true);
+    try {
+      // Step 1 — verify old password via REST (avoids SDK auth-state side-effects)
+      const verifyCtrl = new AbortController();
+      const verifyTimer = setTimeout(() => verifyCtrl.abort(), 15000);
+      let verifyRes;
+      try {
+        verifyRes = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "apikey": SUPABASE_ANON_KEY },
+          body: JSON.stringify({ email: user.email, password: oldPassword }),
+          signal: verifyCtrl.signal,
+        });
+      } finally {
+        clearTimeout(verifyTimer);
+      }
+      if (!verifyRes.ok) { setPasswordError("Current password is incorrect."); return; }
+
+      // Step 2 — update password via REST (same pattern as email change)
+      const { data: sessionData } = await supabase.auth.getSession();
+      const changeCtrl = new AbortController();
+      const changeTimer = setTimeout(() => changeCtrl.abort(), 15000);
+      let changeRes;
+      try {
+        changeRes = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${sessionData?.session?.access_token}`,
+            "apikey": SUPABASE_ANON_KEY,
+          },
+          body: JSON.stringify({ password: newPassword }),
+          signal: changeCtrl.signal,
+        });
+      } finally {
+        clearTimeout(changeTimer);
+      }
+      if (!changeRes.ok) {
+        const body = await changeRes.json().catch(() => ({}));
+        throw new Error(body.msg || body.message || `Password update failed (${changeRes.status})`);
+      }
+
+      setPasswordSuccess("Password changed successfully.");
+    } catch (err) {
+      setPasswordError(err.name === "AbortError" ? "Request timed out — please try again." : err.message || "Failed to change password.");
+    } finally {
+      setPasswordSaving(false);
+    }
+  };
+
   const handleDiscard = () => {
     setFirstName(profile?.first_name ?? "");
     setLastName(profile?.last_name ?? "");
@@ -267,6 +359,121 @@ export default function Profile() {
               {saving ? "Saving..." : "Save Profile"}
             </button>
           )}
+        </div>
+      )}
+
+      {/* Change Password button */}
+      <div className="pt-2 border-t border-zinc-700">
+        <button
+          onClick={() => setShowPasswordModal(true)}
+          className="rounded-2xl bg-sky-500 px-5 py-3 font-semibold text-black hover:bg-sky-400"
+        >
+          Change Password
+        </button>
+      </div>
+
+      {/* Change Password modal */}
+      {showPasswordModal && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4" style={{ zIndex: 60 }}>
+          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 w-full max-w-sm space-y-4">
+            <h3 className="text-xl font-bold">Change Password</h3>
+
+            {passwordSuccess ? (
+              <>
+                <div className="rounded-xl bg-emerald-500/10 border border-emerald-500 p-3 text-emerald-200 text-sm">{passwordSuccess}</div>
+                <button onClick={closePasswordModal} className="w-full rounded-2xl bg-sky-500 px-4 py-3 font-semibold text-black hover:bg-sky-400">Close</button>
+              </>
+            ) : (
+              <>
+                {/* Old password */}
+                <div className="flex flex-col gap-1">
+                  <label className="text-sm text-slate-400">Current Password</label>
+                  <div className="relative">
+                    <input
+                      type={showOldPw ? "text" : "password"}
+                      value={oldPassword}
+                      onChange={e => { setOldPassword(e.target.value); setPasswordError(null); }}
+                      className="w-full rounded-2xl border border-zinc-700 bg-zinc-950 px-4 py-3 pr-12 text-white focus:border-sky-500 focus:outline-none"
+                      placeholder="Enter current password"
+                    />
+                    <button type="button" onClick={() => setShowOldPw(v => !v)} className="absolute right-4 top-3.5 text-zinc-400 hover:text-white">
+                      {showOldPw ? <EyeOff size={18} /> : <Eye size={18} />}
+                    </button>
+                  </div>
+                </div>
+
+                {/* New password */}
+                <div className="flex flex-col gap-1">
+                  <label className="text-sm text-slate-400">New Password</label>
+                  <div className="relative">
+                    <input
+                      type={showNewPw ? "text" : "password"}
+                      value={newPassword}
+                      onChange={e => { setNewPassword(e.target.value); setPasswordError(null); }}
+                      className="w-full rounded-2xl border border-zinc-700 bg-zinc-950 px-4 py-3 pr-12 text-white focus:border-sky-500 focus:outline-none"
+                      placeholder="Enter new password"
+                    />
+                    <button type="button" onClick={() => setShowNewPw(v => !v)} className="absolute right-4 top-3.5 text-zinc-400 hover:text-white">
+                      {showNewPw ? <EyeOff size={18} /> : <Eye size={18} />}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Password criteria */}
+                {newPassword.length > 0 && (
+                  <ul className="space-y-1">
+                    {pwCriteria.map(c => (
+                      <li key={c.label} className="flex items-center gap-2 text-xs text-white">
+                        <span style={{ color: c.met ? '#34d399' : '#f87171' }} className="text-base leading-none">{c.met ? '✓' : '✕'}</span>
+                        {c.label}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                {/* Confirm new password */}
+                <div className="flex flex-col gap-1">
+                  <label className="text-sm text-slate-400">Confirm New Password</label>
+                  <div className="relative">
+                    <input
+                      type={showConfirmPw ? "text" : "password"}
+                      value={confirmPassword}
+                      onChange={e => { setConfirmPassword(e.target.value); setPasswordError(null); }}
+                      className="w-full rounded-2xl border border-zinc-700 bg-zinc-950 px-4 py-3 pr-12 text-white focus:border-sky-500 focus:outline-none"
+                      placeholder="Repeat new password"
+                    />
+                    <button type="button" onClick={() => setShowConfirmPw(v => !v)} className="absolute right-4 top-3.5 text-zinc-400 hover:text-white">
+                      {showConfirmPw ? <EyeOff size={18} /> : <Eye size={18} />}
+                    </button>
+                  </div>
+                  {confirmPassword.length > 0 && newPassword !== confirmPassword && (
+                    <span className="text-xs text-red-400">Passwords do not match.</span>
+                  )}
+                </div>
+
+                {passwordError && (
+                  <div className="rounded-xl bg-red-500/10 border border-red-500 p-3 text-red-200 text-sm">{passwordError}</div>
+                )}
+
+                <div className="flex gap-3 pt-1">
+                  <button
+                    onClick={closePasswordModal}
+                    disabled={passwordSaving}
+                    className="flex-1 rounded-2xl border border-zinc-600 px-4 py-3 font-semibold text-white hover:bg-zinc-800 disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleChangePassword}
+                    disabled={passwordSaving}
+                    className="flex-1 rounded-2xl bg-sky-500 px-4 py-3 font-semibold text-black hover:bg-sky-400 disabled:opacity-50"
+                  >
+                    {passwordSaving ? "Saving…" : "Change Password"}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       )}
 
