@@ -3,7 +3,7 @@ import { useAuth } from "../context/AuthContext";
 import { supabase } from "../supabaseClient";
 
 export default function Pricing() {
-  const { profile } = useAuth();
+  const { profile, loading: authLoading } = useAuth();
 
   const [calloutCharge, setCalloutCharge] = useState("50");
   const [basicRate, setBasicRate] = useState("50");
@@ -23,13 +23,14 @@ export default function Pricing() {
 
   // Fetch pricing data from database on mount or when profile changes
   useEffect(() => {
-    if (profile?.business_id) {
-      fetchPricingData(profile.business_id);
-    } else if (profile && !profile.business_id) {
-      // Profile exists but no business_id yet, set defaults
-      setLoading(false);
-    }
-  }, [profile]);
+  if (authLoading) return;
+
+  if (profile?.business_id) {
+    fetchPricingData(profile.business_id);
+  } else {
+    setLoading(false);
+  }
+}, [authLoading, profile?.business_id]);
 
   const fetchPricingData = async (businessId) => {
     if (!businessId) {

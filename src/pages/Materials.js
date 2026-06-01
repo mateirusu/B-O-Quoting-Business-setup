@@ -71,10 +71,12 @@ export default function Materials() {
   }, [profile?.business_id]);
 
   useEffect(() => {
-    if (!authLoading && profile?.business_id) {
-      fetchMaterials();
-    }
-  }, [authLoading, profile?.business_id, fetchMaterials]);
+  if (!authLoading && profile?.business_id) {
+    fetchMaterials();
+  } else if (!authLoading) {
+    setLoading(false);
+  }
+}, [authLoading, profile?.business_id, fetchMaterials]);
 
   useEffect(() => {
     return () => { if (refreshPollRef.current) clearInterval(refreshPollRef.current); };

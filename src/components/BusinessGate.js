@@ -3,28 +3,63 @@ import { useAuth } from "../context/AuthContext";
 import { supabase } from "../supabaseClient";
 
 export default function BusinessGate({ children }) {
-  const { session } = useAuth();
+  
+  const { session, profile: authProfile, refreshProfile } = useAuth();
+
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState(null);
   const [businessName, setBusinessName] = useState("");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    const load = async () => {
-      if (!session?.user) return;
+  let cancelled = false;
 
-      const { data } = await supabase
+  const load = async () => {
+    if (!session?.user) {
+      setProfile(null);
+      setLoading(false);
+      return;
+    }
+
+    if (authProfile) {
+      setProfile(authProfile);
+      setLoading(false);
+      return;
+    }
+
+    try {
+      setLoading(true);
+
+      const { data, error } = await supabase
         .from("profile")
         .select("business_id")
         .eq("user_id", session.user.id)
         .maybeSingle();
 
-      setProfile(data);
-      setLoading(false);
-    };
+      if (error) throw error;
 
-    load();
-  }, [session]);
+      if (!cancelled) {
+        setProfile(data ?? null);
+      }
+    } catch (error) {
+      console.error("Failed to load business profile:", error);
+
+      if (!cancelled) {
+        setProfile(null);
+      }
+    } finally {
+      if (!cancelled) {
+        setLoading(false);
+      }
+    }
+  };
+
+  load();
+
+  return () => {
+    cancelled = true;
+  };
+}, [session, authProfile]);
 
   const createBusiness = async () => {
     if (!session?.user) return;
@@ -61,6 +96,8 @@ export default function BusinessGate({ children }) {
         .maybeSingle();
 
       setProfile(verify);
+      await refreshProfile();
+
     } finally {
       setSaving(false);
     }

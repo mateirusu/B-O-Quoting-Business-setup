@@ -121,12 +121,14 @@ export default function Services() {
   }, [profile?.business_id]);
 
   useEffect(() => {
-    if (!authLoading && profile?.business_id) {
-      fetchHourlyRate();
-      fetchServices();
-      fetchAllServicesMaterialsTotals();
-    }
-  }, [authLoading, profile?.business_id, fetchHourlyRate, fetchServices, fetchAllServicesMaterialsTotals]);
+  if (!authLoading && profile?.business_id) {
+    fetchHourlyRate();
+    fetchServices();
+    fetchAllServicesMaterialsTotals();
+  } else if (!authLoading) {
+    setLoading(false);
+  }
+}, [authLoading, profile?.business_id, fetchHourlyRate, fetchServices, fetchAllServicesMaterialsTotals]);
 
   const sanitizeNumberInput = (value) => {
     if (!value) return "";

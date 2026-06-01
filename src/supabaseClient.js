@@ -22,9 +22,6 @@ export const supabase = createClient(
   SUPABASE_URL,
   SUPABASE_ANON_KEY,
   {
-    auth: {
-      lock: async (_name, _acquireTimeout, fn) => await fn(),
-    },
     global: {
       fetch: fetchWithTimeout,
     },
