@@ -5,8 +5,8 @@ import { supabase } from "../supabaseClient";
 export default function Pricing() {
   const { profile, loading: authLoading } = useAuth();
 
-  const [calloutCharge, setCalloutCharge] = useState("50");
-  const [basicRate, setBasicRate] = useState("50");
+  const [calloutCharge, setCalloutCharge] = useState("");
+  const [basicRate, setBasicRate] = useState("");
 
   const [draftCalloutCharge, setDraftCalloutCharge] = useState(calloutCharge);
   const [draftBasicRate, setDraftBasicRate] = useState(basicRate);
@@ -58,10 +58,10 @@ export default function Pricing() {
       }
 
       if (data) {
-        setCalloutCharge(data.callout_charge?.toString() ?? "50");
-        setBasicRate(data.hourly_rate?.toString() ?? "50");
-        setDraftCalloutCharge(data.callout_charge?.toString() ?? "50");
-        setDraftBasicRate(data.hourly_rate?.toString() ?? "50");
+        setCalloutCharge(data.callout_charge != null ? data.callout_charge.toString() : "");
+        setBasicRate(data.hourly_rate != null ? data.hourly_rate.toString() : "");
+        setDraftCalloutCharge(data.callout_charge != null ? data.callout_charge.toString() : "");
+        setDraftBasicRate(data.hourly_rate != null ? data.hourly_rate.toString() : "");
       }
     } catch (err) {
       console.error("Error fetching pricing:", err);

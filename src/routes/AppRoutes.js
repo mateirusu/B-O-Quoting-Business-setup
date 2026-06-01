@@ -4,6 +4,7 @@ import ProtectedRoute from "../components/ProtectedRoute";
 import Dashboard from "../pages/Dashboard";
 import Login from "../pages/Login";
 import Register from "../pages/Register";
+import SetPassword from "../pages/SetPassword";
 import Settings from "../pages/Settings";
 import CRM from "../pages/CRM";
 import Schedule from "../pages/Schedule";
@@ -13,6 +14,7 @@ export default function AppRoutes() {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
+      <Route path="/set-password" element={<SetPassword />} />
       <Route
         path="/app"
         element={
