@@ -57,10 +57,26 @@ export function AuthProvider({ children }) {
       init();
     }
 
-    const { data: listener } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    const { data: listener } = supabase.auth.onAuthStateChange(async (event, session) => {
       setSession(session);
       if (session?.user?.id) {
         await fetchProfile(session.user.id);
+
+        // Detect email change confirmation: the session email now matches the
+        // pending email we stored in localStorage when the change was initiated.
+        const pendingEmail = localStorage.getItem('email_change_pending');
+        if (pendingEmail && session.user.email === pendingEmail) {
+          localStorage.removeItem('email_change_pending');
+          // Sync confirmed email into the profile table
+          await supabase
+            .from('profile')
+            .update({ email: pendingEmail })
+            .eq('user_id', session.user.id);
+          // Sign out so the user logs back in fresh with the new email
+          await supabase.auth.signOut();
+          window.location.href = '/login';
+          return;
+        }
       } else {
         setProfile(null);
       }

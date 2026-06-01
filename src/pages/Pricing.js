@@ -143,7 +143,7 @@ export default function Pricing() {
       {/* PRICING SECTION */}
       <div className="rounded-3xl border border-zinc-800 bg-zinc-900">
         <div className="flex justify-between p-5 cursor-pointer" onClick={() => setPricingOpen(!pricingOpen)}>
-          <h2 className="text-2xl font-bold">Pricing Settings</h2>
+          <h2 className="text-2xl font-bold">Basic Pricing</h2>
           <span className="text-sky-400">{pricingOpen ? "▲" : "▼"}</span>
         </div>
 
@@ -164,7 +164,7 @@ export default function Pricing() {
                     />
                   </div>
                   <div>
-                    <h3 className="text-sm text-zinc-300 mb-2">Basic Hourly Rate (£)</h3>
+                    <h3 className="text-sm text-zinc-300 mb-2">Hourly Rate (£)</h3>
                     <input 
                       value={draftBasicRate} 
                       inputMode="decimal" 

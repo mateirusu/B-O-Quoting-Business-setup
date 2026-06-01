@@ -4,11 +4,12 @@ import { useAuth } from "../context/AuthContext";
 import { supabase } from "../supabaseClient";
 
 export default function PageHeader({ title, subtitle }) {
-  const { session } = useAuth();
+  const { session, profile } = useAuth();
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
 
   const userInitial = session?.user?.email?.charAt(0)?.toUpperCase() || "U";
+  const avatarUrl = profile?.profile_image_url;
 
   const logout = async () => {
     await supabase.auth.signOut();
@@ -26,8 +27,11 @@ export default function PageHeader({ title, subtitle }) {
         <button
           onClick={() => setMenuOpen((open) => !open)}
           className="w-10 h-10 rounded-full bg-sky-400 text-black font-bold flex items-center justify-center"
+          style={{ padding: 0, overflow: 'hidden' }}
         >
-          {userInitial}
+          {avatarUrl
+            ? <img src={avatarUrl} alt="avatar" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            : userInitial}
         </button>
 
         {menuOpen && (
