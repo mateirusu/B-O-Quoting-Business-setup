@@ -4,6 +4,7 @@ import Profile from "./Profile";
 import Pricing from "./Pricing";
 import Services from "./Services";
 import Materials from "./Materials";
+import Business from "./Business";
 
 export default function Settings() {
   const [activeTab, setActiveTab] = useState("Pricing");
@@ -17,7 +18,7 @@ export default function Settings() {
       case "Materials":
         return <Materials />;
       case "Business":
-        return <div className="text-slate-300">Business settings will be displayed here.</div>;
+        return <Business />;
       case "Engineers":
         return <div className="text-slate-300">Engineers settings will be displayed here.</div>;
       case "Profile":
