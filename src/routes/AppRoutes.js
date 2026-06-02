@@ -7,6 +7,7 @@ import Register from "../pages/Register";
 import SetPassword from "../pages/SetPassword";
 import Settings from "../pages/Settings";
 import CRM from "../pages/CRM";
+import CustomerView from "../pages/CustomerView";
 import Schedule from "../pages/Schedule";
 
 export default function AppRoutes() {
@@ -31,6 +32,16 @@ export default function AppRoutes() {
           <ProtectedRoute>
             <BusinessGate>
               <CRM />
+            </BusinessGate>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/crm/clients/:customerId"
+        element={
+          <ProtectedRoute>
+            <BusinessGate>
+              <CustomerView />
             </BusinessGate>
           </ProtectedRoute>
         }

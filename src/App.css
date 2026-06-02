@@ -228,6 +228,10 @@ input {
   border-radius: 9999px;
 }
 
+.rounded-lg {
+  border-radius: 10px;
+}
+
 .rounded-xl {
   border-radius: 18px;
 }
@@ -269,13 +273,17 @@ button {
   box-sizing: border-box;
 }
 
-input {
+input, select, textarea {
   width: 100%;
   border-radius: 18px;
   background: var(--surface-alt);
   border: 1px solid rgba(255, 255, 255, 0.08);
   color: var(--text);
   transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+select option {
+  background: #09090b;
 }
 
 input::placeholder {
@@ -423,9 +431,28 @@ button.w-full {
   overflow: hidden;
 }
 
+.px-3 {
+  padding-left: 0.75rem;
+  padding-right: 0.75rem;
+}
+
 .px-5 {
   padding-left: 1.25rem;
   padding-right: 1.25rem;
+}
+
+.py-1 {
+  padding-top: 0.25rem;
+  padding-bottom: 0.25rem;
+}
+
+.py-2 {
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+}
+
+.text-xs {
+  font-size: 0.75rem;
 }
 
 .font-semibold {
@@ -464,12 +491,28 @@ button.w-full {
   background: #3f3f46;
 }
 
+.bg-zinc-600 {
+  background: #52525b;
+}
+
+.hover\:bg-zinc-500:hover {
+  background: #71717a;
+}
+
 .bg-red-500 {
   background: #ef4444;
 }
 
+.bg-red-600 {
+  background: #dc2626;
+}
+
 .hover\:bg-red-400:hover {
   background: #f87171;
+}
+
+.hover\:bg-red-500:hover {
+  background: #ef4444;
 }
 
 /* Services Grid Layout */

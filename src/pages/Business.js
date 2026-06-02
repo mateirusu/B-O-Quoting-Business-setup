@@ -1,6 +1,7 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { supabase } from "../supabaseClient";
+import AddressLookup from "../components/AddressLookup";
 
 const empty = {
   business_name:        "",
@@ -40,12 +41,7 @@ export default function Business() {
   const [sectionErr,    setSectionErr]    = useState({ name: null,  contact: null,  address: null,  legal: null  });
 
   // Address view: 'lookup' | 'form' | 'display'
-  const [addressView,   setAddressView]   = useState("lookup");
-  const [searchQuery,   setSearchQuery]   = useState("");
-  const [addrResults,   setAddrResults]   = useState([]);
-  const [addrSearching, setAddrSearching] = useState(false);
-  const [addrSearchErr, setAddrSearchErr] = useState(null);
-  const textDebounce = useRef(null);
+  const [addressView, setAddressView] = useState("lookup");
 
   // ── Load ────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -134,89 +130,7 @@ export default function Business() {
   };
 
   // ── Address lookup ────────────────────────────────────────────────────────
-  const UK_POSTCODE = /^[A-Z]{1,2}[0-9][0-9A-Z]?\s*[0-9][A-Z]{2}$/i;
-
-  // Normalise any source into { line1, line2, city, county, country, postcode }
-  const fromGetAddress = (a, postcode) => ({
-    line1:    a.line_1 || "",
-    line2:    a.line_2 || "",
-    city:     a.town_or_city || "",
-    county:   a.county || "",
-    country:  a.country || "United Kingdom",
-    postcode: postcode || "",
-  });
-
-  const fromNominatim = r => {
-    const a = r.address || {};
-    return {
-      line1:    [a.house_number, a.road].filter(Boolean).join(" ") || r.display_name?.split(",")[0] || "",
-      line2:    a.suburb || a.neighbourhood || a.quarter || "",
-      city:     a.city || a.town || a.village || a.municipality || "",
-      county:   a.county || a.state_district || "",
-      country:  a.country || "United Kingdom",
-      postcode: a.postcode || "",
-    };
-  };
-
-  const runSearch = async query => {
-    if (!query.trim()) return;
-    setAddrSearching(true);
-    setAddrResults([]);
-    setAddrSearchErr(null);
-    try {
-      const q          = query.trim();
-      const isPostcode = UK_POSTCODE.test(q);
-
-      if (isPostcode) {
-        // Proxy through Supabase edge function (avoids CORS + keeps API key server-side)
-        const { data: fnData, error: fnErr } = await supabase.functions.invoke("get-addresses", {
-          body: { postcode: q.trim().toUpperCase() },
-        });
-        if (fnErr || fnData?.error) {
-          const msg = fnData?.error || fnErr?.message || "Address lookup failed.";
-          setAddrSearchErr(`${msg} Enter your address manually.`);
-          return;
-        }
-        // Full address list from getaddress.io
-        if (fnData?.addresses?.length) {
-          setAddrResults(fnData.addresses);
-          return;
-        }
-        setAddrSearchErr("No addresses found for this postcode.");
-      } else {
-        // Free-text search via Nominatim
-        const url = isPostcode
-          ? `https://nominatim.openstreetmap.org/search?postalcode=${encodeURIComponent(q.trim().replace(/\s+/g, "").toUpperCase())}&countrycodes=gb&format=json&addressdetails=1&limit=20`
-          : `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&countrycodes=gb&format=json&addressdetails=1&limit=15`;
-        const res  = await fetch(url, { headers: { "Accept-Language": "en" } });
-        const data = await res.json();
-        if (!data.length) {
-          setAddrSearchErr("No addresses found. Try a different search or enter manually.");
-          return;
-        }
-        setAddrResults(data.map(fromNominatim));
-      }
-    } catch {
-      setAddrSearchErr("Could not reach the address service. Please enter manually.");
-    } finally {
-      setAddrSearching(false);
-    }
-  };
-
-  const handleSearchInput = value => {
-    setSearchQuery(value);
-    setAddrResults([]);
-    setAddrSearchErr(null);
-    clearTimeout(textDebounce.current);
-    if (value.trim().length < 4) return;
-    textDebounce.current = setTimeout(() => runSearch(value), 500);
-  };
-
-  const formatResult = r =>
-    [r.line1, r.line2, r.city, r.postcode].filter(Boolean).join(", ");
-
   const selectAddress = async result => {
-    setAddrResults([]);
 
     const addr = {
       business_first_line:  result.line1  || null,
@@ -249,12 +163,7 @@ export default function Business() {
     }
   };
 
-  const changeAddress = () => {
-    setAddressView("lookup");
-    setSearchQuery("");
-    setAddrResults([]);
-    setAddrSearchErr(null);
-  };
+  const changeAddress = () => setAddressView("lookup");
 
   // ── Section footer (save / cancel / feedback) ─────────────────────────────
   const SectionFooter = ({ section, showSave }) => (
@@ -364,57 +273,22 @@ export default function Business() {
               </>
             )}
 
-            {/* LOOKUP: single combined search field */}
+            {/* LOOKUP: postcode / address search */}
             {addressView === "lookup" && (
               <>
-                <div>
-                  <h3 className="text-sm text-zinc-300 mb-2">Search by postcode or address</h3>
-                  <div className="flex gap-2">
-                    <input
-                      value={searchQuery}
-                      onChange={e => handleSearchInput(e.target.value)}
-                      onKeyDown={e => e.key === "Enter" && runSearch(searchQuery)}
-                      className="flex-1 p-3 rounded-xl bg-zinc-950 text-white"
-                      placeholder="e.g. SW1A 2AA or 1 Windsor Road"
-                      autoFocus
-                    />
-                    <button
-                      onClick={() => runSearch(searchQuery)}
-                      disabled={addrSearching || !searchQuery.trim()}
-                      className="px-6 py-2 bg-sky-400 text-black rounded-xl font-bold disabled:opacity-40 whitespace-nowrap"
-                    >
-                      {addrSearching ? "Searching…" : "Search"}
-                    </button>
-                  </div>
-                </div>
-
-                {addrSearching && <p className="text-sm text-zinc-400">Searching…</p>}
-                {addrSearchErr  && <p className="text-sm text-red-400">{addrSearchErr}</p>}
-
-                {addrResults.length > 0 && (
-                  <div className="rounded-xl border border-zinc-700 overflow-hidden max-h-72 overflow-y-auto">
-                    {addrResults.map((r, i) => (
-                      <div
-                        key={i}
-                        onClick={() => selectAddress(r)}
-                        className="px-4 py-2 hover:bg-zinc-700 cursor-pointer border-b border-zinc-700 last:border-b-0"
-                      >
-                        <p className="text-xs text-white">{formatResult(r)}</p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                <div className="flex items-center justify-between pt-1">
-                  <button onClick={() => setAddressView("form")} className="text-sky-400 text-sm hover:underline">
-                    Can't find your address? Enter it manually
+                <h3 className="text-sm text-zinc-300">Search by postcode or address</h3>
+                <AddressLookup
+                  onSelect={selectAddress}
+                  onManualEntry={() => {
+                    setFields(prev => ({ ...prev, business_first_line: "", business_second_line: "", business_towncity: "", business_county: "", business_country: "", business_postcode: "" }));
+                    setAddressView("form");
+                  }}
+                />
+                {(original.business_first_line || original.business_postcode) && (
+                  <button onClick={() => setAddressView("display")} className="text-zinc-500 text-sm hover:underline">
+                    Cancel
                   </button>
-                  {(original.business_first_line || original.business_postcode) && (
-                    <button onClick={() => setAddressView("display")} className="text-zinc-500 text-sm hover:underline">
-                      Cancel
-                    </button>
-                  )}
-                </div>
+                )}
               </>
             )}
 
@@ -432,19 +306,19 @@ export default function Business() {
                 <div className="grid md:grid-cols-2 gap-4">
                   <div>
                     <h3 className="text-sm text-zinc-300 mb-2">Town / City</h3>
-                    <input value={fields.business_towncity} onChange={e => handleChange("business_towncity", e.target.value)} className="w-full p-3 rounded-xl bg-zinc-950 text-white" placeholder="London" />
+                    <input value={fields.business_towncity} onChange={e => handleChange("business_towncity", e.target.value)} className="w-full p-3 rounded-xl bg-zinc-950 text-white" placeholder="Town / City" />
                   </div>
                   <div>
                     <h3 className="text-sm text-zinc-300 mb-2">County</h3>
-                    <input value={fields.business_county} onChange={e => handleChange("business_county", e.target.value)} className="w-full p-3 rounded-xl bg-zinc-950 text-white" placeholder="Greater London" />
+                    <input value={fields.business_county} onChange={e => handleChange("business_county", e.target.value)} className="w-full p-3 rounded-xl bg-zinc-950 text-white" placeholder="County" />
                   </div>
                   <div>
                     <h3 className="text-sm text-zinc-300 mb-2">Postcode</h3>
-                    <input value={fields.business_postcode} onChange={e => handleChange("business_postcode", e.target.value)} className="w-full p-3 rounded-xl bg-zinc-950 text-white" placeholder="SW1A 1AA" />
+                    <input value={fields.business_postcode} onChange={e => handleChange("business_postcode", e.target.value)} className="w-full p-3 rounded-xl bg-zinc-950 text-white" placeholder="Postcode" />
                   </div>
                   <div>
                     <h3 className="text-sm text-zinc-300 mb-2">Country</h3>
-                    <input value={fields.business_country} onChange={e => handleChange("business_country", e.target.value)} className="w-full p-3 rounded-xl bg-zinc-950 text-white" placeholder="United Kingdom" />
+                    <input value={fields.business_country} onChange={e => handleChange("business_country", e.target.value)} className="w-full p-3 rounded-xl bg-zinc-950 text-white" placeholder="Country" />
                   </div>
                 </div>
                 <button onClick={() => setAddressView("lookup")} className="text-sky-400 text-sm hover:underline">

@@ -1,28 +1,34 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
-import Clients from "./Clients";
-import Jobs from "./Jobs";
-import Quotes from "./Quotes";
+import CustomerDetails from "./CustomerDetails";
+import CustomerJobs from "./CustomerJobs";
 
-export default function CRM() {
-  const [activeTab, setActiveTab] = useState("Clients");
+export default function CustomerView() {
+  const navigate = useNavigate();
+  const [activeTab, setActiveTab] = useState("Client Details");
 
   const renderContent = () => {
     switch (activeTab) {
-      case "Clients": return <Clients />;
-      case "Jobs":    return <Jobs />;
-      case "Quotes":  return <Quotes />;
-      default:        return null;
+      case "Client Details": return <CustomerDetails />;
+      case "Jobs":           return <CustomerJobs />;
+      default:               return null;
     }
   };
 
   return (
     <div className="min-h-screen bg-black text-white p-6">
-      <PageHeader title="CRM" />
+      <PageHeader title="Client" />
 
       <div className="flex gap-6">
         <aside style={{ width: "10%" }} className="bg-zinc-900 rounded-2xl p-4 space-y-3">
-          {["Clients", "Jobs", "Quotes"].map((tab) => (
+          <button
+            onClick={() => navigate("/crm")}
+            className="w-full text-left px-4 py-3 rounded-2xl text-sky-400 text-sm hover:bg-zinc-800 transition"
+          >
+            ← Clients
+          </button>
+          {["Client Details", "Jobs"].map(tab => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
