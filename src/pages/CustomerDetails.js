@@ -1,97 +1,265 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
 import { supabase } from "../supabaseClient";
 import AddressLookup from "../components/AddressLookup";
 
-const emptyForm = {
-  first_name: "", last_name: "", email: "", phone: "",
-  address_line1: "", address_line2: "", town_city: "",
-  county: "", postcode: "", country: "", notes: "",
+const SECTION_KEYS = {
+  contact: ["first_name", "last_name", "email", "phone"],
+  address: ["address_line1", "address_line2", "town_city", "county", "postcode", "country"],
+  notes:   ["notes"],
 };
 
 const hasAddress = f => !!(f.address_line1 || f.postcode);
 
 export default function CustomerDetails() {
   const { customerId } = useParams();
-  const navigate = useNavigate();
+  const navigate       = useNavigate();
+  const { profile }    = useAuth();
 
-  const [customer, setCustomer]   = useState(null);
-  const [loading, setLoading]     = useState(true);
-  const [error, setError]         = useState(null);
+  const [customer,    setCustomer]    = useState(null);
+  const [loading,     setLoading]     = useState(true);
+  const [error,       setError]       = useState(null);
 
-  const [modal, setModal]               = useState(false);
-  const [form, setForm]                 = useState(emptyForm);
-  const [addrView, setAddrView]         = useState("lookup");
-  const [saving, setSaving]             = useState(false);
-  const [formError, setFormError]       = useState(null);
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [fields,   setFields]   = useState({});
+  const [original, setOriginal] = useState({});
 
-  const load = async () => {
+  const [open, setOpen] = useState({ contact: false, address: false, notes: false, legal: false });
+
+  const [sectionSaving, setSectionSaving] = useState({ contact: false, address: false, notes: false });
+  const [sectionMsg,    setSectionMsg]    = useState({ contact: null,  address: null,  notes: null  });
+  const [sectionErr,    setSectionErr]    = useState({ contact: null,  address: null,  notes: null  });
+
+  const [addrView, setAddrView] = useState("display");
+
+  // Delete dialog
+  const [deleteOpen,       setDeleteOpen]       = useState(false);
+  const [customServices,   setCustomServices]   = useState([]);
+  const [svcsLoading,      setSvcsLoading]      = useState(false);
+  const [checkedServices,  setCheckedServices]  = useState(new Set());
+  const [deleting,         setDeleting]         = useState(false);
+  const [deleteError,      setDeleteError]      = useState(null);
+
+  // ── Load customer ─────────────────────────────────────────────────────────
+  const load = useCallback(async () => {
     setLoading(true);
     const { data, error } = await supabase
       .from("customer").select("*").eq("customer_id", customerId).single();
-    if (error || !data) setError("Customer not found.");
-    else setCustomer(data);
-    setLoading(false);
-  };
-
-  useEffect(() => { load(); }, [customerId]);
-
-  const openEdit = () => {
+    if (error || !data) { setError("Customer not found."); setLoading(false); return; }
+    setCustomer(data);
     const f = {
-      first_name:    customer.first_name    || "",
-      last_name:     customer.last_name     || "",
-      email:         customer.email         || "",
-      phone:         customer.phone         || "",
-      address_line1: customer.address_line1 || "",
-      address_line2: customer.address_line2 || "",
-      town_city:     customer.town_city     || "",
-      county:        customer.county        || "",
-      postcode:      customer.postcode      || "",
-      country:       customer.country       || "",
-      notes:         customer.notes         || "",
+      first_name:    data.first_name    || "",
+      last_name:     data.last_name     || "",
+      email:         data.email         || "",
+      phone:         data.phone         || "",
+      address_line1: data.address_line1 || "",
+      address_line2: data.address_line2 || "",
+      town_city:     data.town_city     || "",
+      county:        data.county        || "",
+      postcode:      data.postcode      || "",
+      country:       data.country       || "",
+      notes:         data.notes         || "",
     };
-    setForm(f);
+    setFields(f);
+    setOriginal(f);
     setAddrView(hasAddress(f) ? "display" : "lookup");
-    setFormError(null);
-    setModal(true);
+    setLoading(false);
+  }, [customerId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  // ── Accordion helpers ─────────────────────────────────────────────────────
+  const toggle = key => setOpen(prev => ({ ...prev, [key]: !prev[key] }));
+
+  const isSectionDirty = section =>
+    SECTION_KEYS[section].some(k => fields[k] !== original[k]);
+
+  const handleChange = (k, v) => setFields(prev => ({ ...prev, [k]: v }));
+
+  const cancelSection = section => {
+    setFields(prev => {
+      const reset = { ...prev };
+      SECTION_KEYS[section].forEach(k => { reset[k] = original[k]; });
+      return reset;
+    });
+    setSectionMsg(prev => ({ ...prev, [section]: null }));
+    setSectionErr(prev => ({ ...prev, [section]: null }));
+    if (section === "address") setAddrView(hasAddress(original) ? "display" : "lookup");
   };
 
-  const handleChange = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
-
-  const handleAddressSelect = r => {
-    setForm(prev => ({
-      ...prev,
-      address_line1: r.line1    || "",
-      address_line2: r.line2    || "",
-      town_city:     r.city     || "",
-      county:        r.county   || "",
-      postcode:      r.postcode || "",
-      country:       r.country  || "",
-    }));
-    setAddrView("display");
-  };
-
-  const save = async () => {
-    if (!form.first_name.trim() && !form.last_name.trim()) {
-      setFormError("Please enter at least a first or last name.");
-      return;
+  const saveSection = async section => {
+    setSectionSaving(prev => ({ ...prev, [section]: true }));
+    setSectionMsg(prev => ({ ...prev, [section]: null }));
+    setSectionErr(prev => ({ ...prev, [section]: null }));
+    try {
+      const update = {};
+      SECTION_KEYS[section].forEach(k => { update[k] = fields[k] || null; });
+      const { error } = await supabase.from("customer").update(update).eq("customer_id", customerId);
+      if (error) throw error;
+      setOriginal(prev => ({ ...prev, ...update }));
+      setCustomer(prev => ({ ...prev, ...update }));
+      setSectionMsg(prev => ({ ...prev, [section]: "Saved successfully." }));
+      if (section === "address") setAddrView(hasAddress(fields) ? "display" : "lookup");
+    } catch (err) {
+      setSectionErr(prev => ({ ...prev, [section]: err.message || "Failed to save." }));
+    } finally {
+      setSectionSaving(prev => ({ ...prev, [section]: false }));
     }
-    setSaving(true);
-    setFormError(null);
-    const payload = { ...form };
-    Object.keys(payload).forEach(k => { if (payload[k] === "") payload[k] = null; });
-    const { error } = await supabase.from("customer").update(payload).eq("customer_id", customerId);
-    setSaving(false);
-    if (error) { setFormError(error.message || "Failed to save."); return; }
-    setModal(false);
-    load();
   };
+
+  // ── Address lookup auto-save ──────────────────────────────────────────────
+  const handleAddressSelect = async r => {
+    const patch = {
+      address_line1: r.line1    || null,
+      address_line2: r.line2    || null,
+      town_city:     r.city     || null,
+      county:        r.county   || null,
+      postcode:      r.postcode || null,
+      country:       r.country  || null,
+    };
+    setFields(prev => ({
+      ...prev,
+      address_line1: patch.address_line1 || "",
+      address_line2: patch.address_line2 || "",
+      town_city:     patch.town_city     || "",
+      county:        patch.county        || "",
+      postcode:      patch.postcode      || "",
+      country:       patch.country       || "",
+    }));
+    const { error } = await supabase.from("customer").update(patch).eq("customer_id", customerId);
+    if (error) {
+      setSectionErr(prev => ({ ...prev, address: error.message || "Failed to save address." }));
+      setAddrView("form");
+    } else {
+      setOriginal(prev => ({
+        ...prev,
+        address_line1: patch.address_line1 || "",
+        address_line2: patch.address_line2 || "",
+        town_city:     patch.town_city     || "",
+        county:        patch.county        || "",
+        postcode:      patch.postcode      || "",
+        country:       patch.country       || "",
+      }));
+      setAddrView("display");
+    }
+  };
+
+  // ── Delete dialog ─────────────────────────────────────────────────────────
+  const openDeleteDialog = async () => {
+    setDeleteError(null);
+    setDeleteOpen(true);
+    setSvcsLoading(true);
+
+    const { data: jobRows } = await supabase
+      .from("job").select("job_id").eq("customer_id", customerId);
+
+    if (!jobRows?.length) { setCustomServices([]); setSvcsLoading(false); return; }
+
+    const jobIds = jobRows.map(j => j.job_id);
+    const { data: jqlRows } = await supabase
+      .from("job_quote_link").select("quote_id").in("job_id", jobIds);
+
+    if (!jqlRows?.length) { setCustomServices([]); setSvcsLoading(false); return; }
+
+    const quoteIds = [...new Set(jqlRows.map(q => q.quote_id))];
+    const { data: qslRows } = await supabase
+      .from("quote_service_link").select("service_id").in("quote_id", quoteIds);
+
+    if (!qslRows?.length) { setCustomServices([]); setSvcsLoading(false); return; }
+
+    const serviceIds = [...new Set(qslRows.map(q => q.service_id))];
+    const { data: svcRows } = await supabase
+      .from("service").select("service_id, title")
+      .in("service_id", serviceIds)
+      .eq("service_type", "Custom");
+
+    const svcs = svcRows ?? [];
+    setCustomServices(svcs);
+    setCheckedServices(new Set());
+    setSvcsLoading(false);
+  };
+
+  const toggleService = id =>
+    setCheckedServices(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+
+  const allChecked = customServices.length > 0 && checkedServices.size === customServices.length;
+
+  const toggleAll = () =>
+    setCheckedServices(allChecked ? new Set() : new Set(customServices.map(s => s.service_id)));
 
   const handleDelete = async () => {
-    await supabase.from("customer").delete().eq("customer_id", customerId);
-    navigate("/crm");
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      // 1. Delete checked custom services
+      if (checkedServices.size > 0) {
+        const ids = [...checkedServices];
+        await supabase.from("material_service_link").delete().in("service_id", ids);
+        await supabase.from("quote_service_link").delete().in("service_id", ids);
+        await supabase.from("service").delete().in("service_id", ids);
+      }
+
+      // 2. Resolve jobs → quotes
+      const { data: jobRows } = await supabase
+        .from("job").select("job_id").eq("customer_id", customerId);
+
+      if (jobRows?.length) {
+        const jobIds = jobRows.map(j => j.job_id);
+        const { data: jqlRows } = await supabase
+          .from("job_quote_link").select("quote_id").in("job_id", jobIds);
+
+        if (jqlRows?.length) {
+          const quoteIds = [...new Set(jqlRows.map(q => q.quote_id))];
+          await supabase.from("quote_service_link").delete().in("quote_id", quoteIds);
+          await supabase.from("job_quote_link").delete().in("job_id", jobIds);
+          await supabase.from("quote").delete().in("quote_id", quoteIds);
+        }
+
+        await supabase.from("job").delete().in("job_id", jobIds);
+      }
+
+      // 3. Delete customer
+      await supabase.from("customer").delete().eq("customer_id", customerId);
+      navigate("/crm/clients");
+    } catch (err) {
+      setDeleteError(err.message || "Failed to delete.");
+      setDeleting(false);
+    }
   };
+
+  // ── Section footer ────────────────────────────────────────────────────────
+  const SectionFooter = ({ section }) => (
+    <>
+      {sectionMsg[section] && (
+        <p className="text-emerald-400 text-sm text-right mt-3">{sectionMsg[section]}</p>
+      )}
+      {sectionErr[section] && (
+        <p className="text-red-400 text-sm text-right mt-3">{sectionErr[section]}</p>
+      )}
+      {isSectionDirty(section) && (
+        <div className="flex justify-end gap-4 pt-4 border-t border-zinc-800 mt-4">
+          <button
+            onClick={() => cancelSection(section)}
+            disabled={sectionSaving[section]}
+            className="px-4 py-2 border border-zinc-600 rounded-xl text-white hover:bg-zinc-800 disabled:opacity-50 text-sm"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => saveSection(section)}
+            disabled={sectionSaving[section]}
+            className="px-4 py-2 bg-sky-500 text-black rounded-xl font-bold hover:bg-sky-400 disabled:opacity-50 text-sm"
+          >
+            {sectionSaving[section] ? "Saving…" : "Save"}
+          </button>
+        </div>
+      )}
+    </>
+  );
 
   if (loading) return <p className="text-zinc-400 text-sm">Loading…</p>;
   if (error)   return <p className="text-red-400 text-sm">{error}</p>;
@@ -101,194 +269,251 @@ export default function CustomerDetails() {
   return (
     <div className="space-y-6">
 
-      {/* ── Name + actions ── */}
-      <div className="flex items-start justify-between">
-        <h1 className="text-3xl font-bold text-white">{fullName}</h1>
-        <div className="flex gap-3">
-          <button onClick={openEdit} className="px-4 py-2 bg-sky-500 text-black font-semibold rounded-xl hover:bg-sky-400 transition text-sm">
-            Edit
-          </button>
-          <button onClick={() => setConfirmDelete(true)} className="px-4 py-2 bg-red-600 text-white font-semibold rounded-xl hover:bg-red-500 transition text-sm">
-            Delete
-          </button>
+      {/* ── Contact ── */}
+      <div className="rounded-3xl border border-zinc-800 bg-zinc-900">
+        <div className="flex justify-between p-5 cursor-pointer select-none" onClick={() => toggle("contact")}>
+          <h2 className="text-2xl font-bold">Contact</h2>
+          <span className="text-sky-400">{open.contact ? "▲" : "▼"}</span>
         </div>
-      </div>
-
-      {/* ── Details card ── */}
-      <div className="space-y-6">
-        <div className="grid md:grid-cols-2 gap-6">
-
-          {/* Contact */}
-          <div className="space-y-3">
-            <p className="text-xs text-zinc-400 uppercase tracking-wider font-semibold">Contact</p>
-            {customer.email && (
+        {open.contact && (
+          <div className="border-t border-zinc-800 p-5 space-y-4">
+            <div className="grid md:grid-cols-2 gap-4">
               <div>
-                <p className="text-xs text-zinc-400 mb-0.5">Email</p>
-                <p className="text-white text-sm">{customer.email}</p>
+                <h3 className="text-sm text-zinc-300 mb-2">First Name</h3>
+                <input value={fields.first_name} onChange={e => handleChange("first_name", e.target.value)}
+                  className="w-full p-3 rounded-xl bg-zinc-950 text-white" placeholder="John" />
               </div>
-            )}
-            {customer.phone && (
               <div>
-                <p className="text-xs text-zinc-400 mb-0.5">Phone</p>
-                <p className="text-white text-sm">{customer.phone}</p>
+                <h3 className="text-sm text-zinc-300 mb-2">Last Name</h3>
+                <input value={fields.last_name} onChange={e => handleChange("last_name", e.target.value)}
+                  className="w-full p-3 rounded-xl bg-zinc-950 text-white" placeholder="Smith" />
               </div>
-            )}
-            {!customer.email && !customer.phone && (
-              <p className="text-zinc-500 text-sm">No contact details on record.</p>
-            )}
-          </div>
-
-          {/* Address */}
-          <div className="space-y-3">
-            <p className="text-xs text-zinc-400 uppercase tracking-wider font-semibold">Address</p>
-            {(customer.address_line1 || customer.postcode) ? (
-              <div className="text-sm text-white space-y-0.5">
-                {customer.address_line1 && <p>{customer.address_line1}</p>}
-                {customer.address_line2 && <p>{customer.address_line2}</p>}
-                {(customer.town_city || customer.postcode) && (
-                  <p>{[customer.town_city, customer.postcode].filter(Boolean).join(", ")}</p>
-                )}
-                {customer.county  && <p>{customer.county}</p>}
-                {customer.country && <p>{customer.country}</p>}
+              <div>
+                <h3 className="text-sm text-zinc-300 mb-2">Email</h3>
+                <input type="email" value={fields.email} onChange={e => handleChange("email", e.target.value)}
+                  className="w-full p-3 rounded-xl bg-zinc-950 text-white" placeholder="john@example.com" />
               </div>
-            ) : (
-              <p className="text-zinc-500 text-sm">No address on record.</p>
-            )}
-          </div>
-        </div>
-
-        {/* Notes */}
-        {customer.notes && (
-          <div className="space-y-2 border-t border-zinc-800 pt-4">
-            <p className="text-xs text-zinc-400 uppercase tracking-wider font-semibold">Notes</p>
-            <p className="text-sm text-zinc-300 whitespace-pre-wrap">{customer.notes}</p>
+              <div>
+                <h3 className="text-sm text-zinc-300 mb-2">Phone</h3>
+                <input value={fields.phone} onChange={e => handleChange("phone", e.target.value)}
+                  className="w-full p-3 rounded-xl bg-zinc-950 text-white" placeholder="+44 7700 000000" />
+              </div>
+            </div>
+            <SectionFooter section="contact" />
           </div>
         )}
-
-        <p className="text-xs text-zinc-500 border-t border-zinc-800 pt-4">
-          Added {new Date(customer.created_at).toLocaleDateString("en-GB")}
-        </p>
       </div>
 
-      {/* ── Edit modal ── */}
-      {modal && (
+      {/* ── Address ── */}
+      <div className="rounded-3xl border border-zinc-800 bg-zinc-900">
+        <div className="flex justify-between p-5 cursor-pointer select-none" onClick={() => toggle("address")}>
+          <h2 className="text-2xl font-bold">Address</h2>
+          <span className="text-sky-400">{open.address ? "▲" : "▼"}</span>
+        </div>
+        {open.address && (
+          <div className="border-t border-zinc-800 p-5 space-y-4">
+
+            {addrView === "display" && (
+              <>
+                <div className="bg-zinc-950 rounded-xl p-4 text-sm text-zinc-200 space-y-0.5">
+                  {original.address_line1 && <p>{original.address_line1}</p>}
+                  {original.address_line2 && <p>{original.address_line2}</p>}
+                  {(original.town_city || original.postcode) && (
+                    <p>{[original.town_city, original.postcode].filter(Boolean).join(", ")}</p>
+                  )}
+                  {original.county  && <p>{original.county}</p>}
+                  {original.country && <p>{original.country}</p>}
+                </div>
+                <button onClick={() => setAddrView("lookup")} className="text-sky-400 text-sm hover:underline">
+                  Change address
+                </button>
+              </>
+            )}
+
+            {addrView === "lookup" && (
+              <>
+                <AddressLookup
+                  onSelect={handleAddressSelect}
+                  onManualEntry={() => {
+                    setFields(prev => ({ ...prev, address_line1: "", address_line2: "", town_city: "", county: "", postcode: "", country: "" }));
+                    setAddrView("form");
+                  }}
+                />
+                {hasAddress(original) && (
+                  <button onClick={() => setAddrView("display")} className="text-zinc-500 text-sm hover:underline">Cancel</button>
+                )}
+              </>
+            )}
+
+            {addrView === "form" && (
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="col-span-2">
+                    <h3 className="text-sm text-zinc-300 mb-2">Address Line 1</h3>
+                    <input value={fields.address_line1} onChange={e => handleChange("address_line1", e.target.value)}
+                      className="w-full p-3 rounded-xl bg-zinc-950 text-white" placeholder="Address line 1" />
+                  </div>
+                  <div className="col-span-2">
+                    <h3 className="text-sm text-zinc-300 mb-2">Address Line 2</h3>
+                    <input value={fields.address_line2} onChange={e => handleChange("address_line2", e.target.value)}
+                      className="w-full p-3 rounded-xl bg-zinc-950 text-white" placeholder="Optional" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm text-zinc-300 mb-2">Town / City</h3>
+                    <input value={fields.town_city} onChange={e => handleChange("town_city", e.target.value)}
+                      className="w-full p-3 rounded-xl bg-zinc-950 text-white" placeholder="Town / City" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm text-zinc-300 mb-2">County</h3>
+                    <input value={fields.county} onChange={e => handleChange("county", e.target.value)}
+                      className="w-full p-3 rounded-xl bg-zinc-950 text-white" placeholder="County" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm text-zinc-300 mb-2">Postcode</h3>
+                    <input value={fields.postcode} onChange={e => handleChange("postcode", e.target.value)}
+                      className="w-full p-3 rounded-xl bg-zinc-950 text-white" placeholder="Postcode" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm text-zinc-300 mb-2">Country</h3>
+                    <input value={fields.country} onChange={e => handleChange("country", e.target.value)}
+                      className="w-full p-3 rounded-xl bg-zinc-950 text-white" placeholder="Country" />
+                  </div>
+                </div>
+                <button onClick={() => setAddrView("lookup")} className="text-sky-400 text-sm hover:underline">
+                  ← Back to search
+                </button>
+              </>
+            )}
+
+            {addrView === "form" && <SectionFooter section="address" />}
+            {sectionErr.address && addrView !== "form" && (
+              <p className="text-red-400 text-sm mt-2">{sectionErr.address}</p>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ── Notes ── */}
+      <div className="rounded-3xl border border-zinc-800 bg-zinc-900">
+        <div className="flex justify-between p-5 cursor-pointer select-none" onClick={() => toggle("notes")}>
+          <h2 className="text-2xl font-bold">Notes</h2>
+          <span className="text-sky-400">{open.notes ? "▲" : "▼"}</span>
+        </div>
+        {open.notes && (
+          <div className="border-t border-zinc-800 p-5 space-y-4">
+            <textarea
+              value={fields.notes}
+              onChange={e => handleChange("notes", e.target.value)}
+              rows={5}
+              className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm resize-none"
+              placeholder="Any additional notes about this client…"
+            />
+            <SectionFooter section="notes" />
+          </div>
+        )}
+      </div>
+
+      {/* ── Legal ── */}
+      <div className="rounded-3xl border border-zinc-800 bg-zinc-900">
+        <div className="flex justify-between p-5 cursor-pointer select-none" onClick={() => toggle("legal")}>
+          <h2 className="text-2xl font-bold">Legal</h2>
+          <span className="text-sky-400">{open.legal ? "▲" : "▼"}</span>
+        </div>
+        {open.legal && (
+          <div className="border-t border-zinc-800 p-5">
+            <p className="text-sm text-zinc-400 mb-4">
+              Permanently remove this client and all associated data. This cannot be undone.
+            </p>
+            <button
+              onClick={openDeleteDialog}
+              className="px-4 py-2 bg-red-600 text-white font-semibold rounded-xl hover:bg-red-500 transition text-sm"
+            >
+              Delete Client
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* ── Delete confirmation dialog ── */}
+      {deleteOpen && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="bg-zinc-900 rounded-2xl w-full max-w-2xl" style={{ height: "90vh", display: "flex", flexDirection: "column" }}>
-            <h3 style={{ flexShrink: 0 }} className="text-xl font-bold px-6 pt-6 pb-4 text-white border-b border-zinc-800">
-              Edit Client
-            </h3>
+          <div className="bg-zinc-900 rounded-2xl w-full max-w-2xl">
 
-            <div style={{ flex: "1 1 0", overflowY: "auto", minHeight: 0 }} className="px-6 py-4 space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-xs text-zinc-400 mb-1 block">First Name</label>
-                  <input value={form.first_name} onChange={e => handleChange("first_name", e.target.value)} className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm" placeholder="John" />
-                </div>
-                <div>
-                  <label className="text-xs text-zinc-400 mb-1 block">Last Name</label>
-                  <input value={form.last_name} onChange={e => handleChange("last_name", e.target.value)} className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm" placeholder="Smith" />
-                </div>
-                <div>
-                  <label className="text-xs text-zinc-400 mb-1 block">Email</label>
-                  <input type="email" value={form.email} onChange={e => handleChange("email", e.target.value)} className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm" placeholder="john@example.com" />
-                </div>
-                <div>
-                  <label className="text-xs text-zinc-400 mb-1 block">Phone</label>
-                  <input value={form.phone} onChange={e => handleChange("phone", e.target.value)} className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm" placeholder="+44 7700 000000" />
-                </div>
-              </div>
+            <div className="px-6 pt-6 pb-4 border-b border-zinc-800">
+              <h3 className="text-xl font-bold text-white">Delete {fullName}?</h3>
+            </div>
 
-              <div className="rounded-xl border border-zinc-700 p-4 space-y-3">
-                <p className="text-sm text-zinc-300 font-medium">Address</p>
-
-                {addrView === "display" && (
-                  <>
-                    <div className="bg-zinc-950 rounded-xl p-3 text-sm text-zinc-200 space-y-0.5">
-                      {form.address_line1 && <p>{form.address_line1}</p>}
-                      {form.address_line2 && <p>{form.address_line2}</p>}
-                      {(form.town_city || form.postcode) && <p>{[form.town_city, form.postcode].filter(Boolean).join(", ")}</p>}
-                      {form.county  && <p>{form.county}</p>}
-                      {form.country && <p>{form.country}</p>}
-                    </div>
-                    <button onClick={() => setAddrView("lookup")} className="text-sky-400 text-sm hover:underline">Change address</button>
-                  </>
-                )}
-
-                {addrView === "lookup" && (
-                  <>
-                    <AddressLookup
-                      onSelect={handleAddressSelect}
-                      onManualEntry={() => {
-                        setForm(prev => ({ ...prev, address_line1: "", address_line2: "", town_city: "", county: "", postcode: "", country: "" }));
-                        setAddrView("form");
-                      }}
-                    />
-                    {hasAddress(form) && (
-                      <button onClick={() => setAddrView("display")} className="text-zinc-500 text-sm hover:underline">Cancel</button>
-                    )}
-                  </>
-                )}
-
-                {addrView === "form" && (
-                  <>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="col-span-2">
-                        <label className="text-xs text-zinc-400 mb-1 block">Address Line 1</label>
-                        <input value={form.address_line1} onChange={e => handleChange("address_line1", e.target.value)} className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm" placeholder="1 Windsor Road" />
-                      </div>
-                      <div className="col-span-2">
-                        <label className="text-xs text-zinc-400 mb-1 block">Address Line 2</label>
-                        <input value={form.address_line2} onChange={e => handleChange("address_line2", e.target.value)} className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm" placeholder="Walton-le-Dale" />
-                      </div>
-                      <div>
-                        <label className="text-xs text-zinc-400 mb-1 block">Town / City</label>
-                        <input value={form.town_city} onChange={e => handleChange("town_city", e.target.value)} className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm" placeholder="Preston" />
-                      </div>
-                      <div>
-                        <label className="text-xs text-zinc-400 mb-1 block">County</label>
-                        <input value={form.county} onChange={e => handleChange("county", e.target.value)} className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm" placeholder="Lancashire" />
-                      </div>
-                      <div>
-                        <label className="text-xs text-zinc-400 mb-1 block">Postcode</label>
-                        <input value={form.postcode} onChange={e => handleChange("postcode", e.target.value)} className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm" placeholder="PR5 4QE" />
-                      </div>
-                      <div>
-                        <label className="text-xs text-zinc-400 mb-1 block">Country</label>
-                        <input value={form.country} onChange={e => handleChange("country", e.target.value)} className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm" placeholder="United Kingdom" />
-                      </div>
-                    </div>
-                    <button onClick={() => setAddrView("lookup")} className="text-sky-400 text-sm hover:underline">← Back to search</button>
-                  </>
-                )}
-              </div>
+            <div className="px-6 py-4 space-y-4 overflow-y-auto" style={{ maxHeight: "60vh" }}>
+              <p className="text-zinc-300 text-sm">
+                This will permanently delete <span className="text-white font-semibold">{fullName}</span> along
+                with all their linked <span className="text-white font-semibold">jobs and quotes</span>.
+                Services and materials in your catalogue will <span className="text-white font-semibold">not</span> be
+                affected — except for any Custom services you select below.
+              </p>
 
               <div>
-                <label className="text-xs text-zinc-400 mb-1 block">Notes</label>
-                <textarea value={form.notes} onChange={e => handleChange("notes", e.target.value)} rows={3} className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm resize-none" placeholder="Any additional notes…" />
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-sm font-semibold text-zinc-300">Custom services linked to this client's quotes</p>
+                  {customServices.length > 0 && (
+                    <button onClick={toggleAll} className="text-xs text-sky-400 hover:underline">
+                      {allChecked ? "Uncheck all" : "Check all"}
+                    </button>
+                  )}
+                </div>
+
+                {svcsLoading ? (
+                  <p className="text-zinc-400 text-sm">Loading…</p>
+                ) : customServices.length === 0 ? (
+                  <p className="text-zinc-500 text-sm">No custom services found.</p>
+                ) : (
+                  <div className="rounded-xl border border-zinc-700 overflow-hidden">
+                    <table className="w-full text-sm text-left">
+                      <thead className="bg-zinc-800 text-zinc-400 uppercase text-xs">
+                        <tr>
+                          <th className="px-4 py-2 w-10">
+                            <input type="checkbox" checked={allChecked} onChange={toggleAll} className="accent-sky-500" />
+                          </th>
+                          <th className="px-4 py-2">Service Name</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-zinc-700">
+                        {customServices.map(s => (
+                          <tr key={s.service_id} className="hover:bg-zinc-800 transition">
+                            <td className="px-4 py-2">
+                              <input
+                                type="checkbox"
+                                checked={checkedServices.has(s.service_id)}
+                                onChange={() => toggleService(s.service_id)}
+                                className="accent-sky-500"
+                              />
+                            </td>
+                            <td className="px-4 py-2 text-zinc-200">{s.title}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
 
-              {formError && <p className="text-red-400 text-sm">{formError}</p>}
+              {deleteError && <p className="text-red-400 text-sm">{deleteError}</p>}
             </div>
 
-            <div style={{ flexShrink: 0 }} className="px-6 py-4 border-t border-zinc-800 flex justify-end gap-3">
-              <button onClick={() => setModal(false)} className="px-5 py-2 rounded-xl border border-zinc-600 text-white hover:bg-zinc-800 transition text-sm">Cancel</button>
-              <button onClick={save} disabled={saving} className="px-5 py-2 rounded-xl bg-sky-500 text-black font-semibold hover:bg-sky-400 transition text-sm disabled:opacity-50">
-                {saving ? "Saving…" : "Save Changes"}
+            <div className="px-6 py-4 border-t border-zinc-800 flex justify-end gap-3">
+              <button
+                onClick={() => { setDeleteOpen(false); setDeleteError(null); }}
+                disabled={deleting}
+                className="px-5 py-2 rounded-xl border border-zinc-600 text-white hover:bg-zinc-800 transition text-sm disabled:opacity-50"
+              >
+                Cancel
               </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Delete confirmation ── */}
-      {confirmDelete && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="bg-zinc-900 rounded-2xl p-6 w-full max-w-sm space-y-4">
-            <h3 className="text-lg font-bold text-white">Delete Client?</h3>
-            <p className="text-zinc-400 text-sm">This will permanently delete <span className="text-white font-medium">{fullName}</span> and cannot be undone.</p>
-            <div className="flex justify-end gap-3">
-              <button onClick={() => setConfirmDelete(false)} className="px-5 py-2 rounded-xl border border-zinc-600 text-white hover:bg-zinc-800 transition text-sm">Cancel</button>
-              <button onClick={handleDelete} className="px-5 py-2 rounded-xl bg-red-600 text-white font-semibold hover:bg-red-500 transition text-sm">Delete</button>
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                className="px-5 py-2 rounded-xl bg-red-600 text-white font-semibold hover:bg-red-500 transition text-sm disabled:opacity-50"
+              >
+                {deleting ? "Deleting…" : "Delete"}
+              </button>
             </div>
           </div>
         </div>

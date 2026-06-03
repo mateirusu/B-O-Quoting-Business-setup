@@ -8,6 +8,7 @@ export default function Services() {
   const { profile, loading: authLoading } = useAuth();
 
   const [search, setSearch] = useState("");
+  const [serviceTypeFilter, setServiceTypeFilter] = useState("Reusable");
   const [services, setServices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -24,6 +25,7 @@ export default function Services() {
     title: "",
     description: "",
     hours: "1",
+    service_type: "Reusable",
     image_url:
       "https://images.unsplash.com/photo-1621905252507-b35492cc74b4?q=80&w=1200&auto=format&fit=crop",
   };
@@ -107,6 +109,7 @@ export default function Services() {
         .from("service")
         .select("*")
         .eq("business_id", profile.business_id)
+        .eq("main_service", true)
         .order("created_at", { ascending: false });
 
       if (error) throw error;
@@ -151,6 +154,7 @@ export default function Services() {
       title: service.title,
       description: service.description || "",
       hours: service.hours.toString(),
+      service_type: service.service_type || "Reusable",
       image_url: service.image_url || emptyService.image_url,
     });
     setImageFile(null);
@@ -227,6 +231,8 @@ export default function Services() {
             hours: parseFloat(tempService.hours) || 0,
             image_url: imageUrl,
             business_id: profile.business_id,
+            main_service: true,
+            service_type: "Reusable",
           }])
           .select()
           .maybeSingle();
@@ -381,6 +387,8 @@ export default function Services() {
         hours: parseFloat(tempService.hours) || 0,
         image_url: imageUrl,
         business_id: profile.business_id,
+        main_service: true,
+        service_type: tempService.service_type || "Reusable",
       };
 
       let err;
@@ -502,9 +510,11 @@ export default function Services() {
     }
   };
 
-  const filteredServices = services.filter((s) =>
-    s.title.toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredServices = services.filter((s) => {
+    const matchSearch = s.title.toLowerCase().includes(search.toLowerCase());
+    const matchType   = serviceTypeFilter === "All" || s.service_type === serviceTypeFilter;
+    return matchSearch && matchType;
+  });
 
   if (authLoading || loading) {
     return (
@@ -533,20 +543,38 @@ export default function Services() {
         </div>
       )}
 
-      {/* SEARCH AND ADD BUTTON */}
-      <div className="flex gap-4">
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search services..."
-          className="w-full p-3 rounded-xl bg-zinc-900 border border-zinc-700"
-        />
-        <button
-          onClick={openAddModal}
-          className="px-5 py-3 bg-sky-400 text-black rounded-xl font-bold whitespace-nowrap"
-        >
-          + Add New
-        </button>
+      {/* SEARCH, FILTERS AND ADD BUTTON */}
+      <div className="space-y-3">
+        <div className="flex gap-4">
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search services..."
+            className="w-full p-3 rounded-xl bg-zinc-900 border border-zinc-700"
+          />
+          <button
+            onClick={openAddModal}
+            className="px-5 py-3 bg-sky-400 text-black rounded-xl font-bold whitespace-nowrap"
+          >
+            + Add New
+          </button>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-zinc-400">Type:</span>
+          {["All", "Reusable", "Custom"].map(type => (
+            <button
+              key={type}
+              onClick={() => setServiceTypeFilter(type)}
+              className={`px-3 py-1.5 text-xs rounded-lg font-semibold transition ${
+                serviceTypeFilter === type
+                  ? "bg-sky-500 text-black"
+                  : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
+              }`}
+            >
+              {type}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* HOURLY RATE NOT SET WARNING */}
@@ -559,8 +587,8 @@ export default function Services() {
       {/* SERVICES GRID */}
       {filteredServices.length === 0 ? (
         <div className="text-center py-12 text-zinc-400">
-          {search
-            ? "No services found matching your search."
+          {search || serviceTypeFilter !== "All"
+            ? "No services found matching your filters."
             : "No services added yet. Click '+ Add New' to get started."}
         </div>
       ) : (
@@ -736,6 +764,26 @@ export default function Services() {
                   onChange={(e) => handleChange("title", e.target.value)}
                   placeholder="Enter service title"
                 />
+              </div>
+
+              <div>
+                <label className="block text-xs text-zinc-400 mb-1">Service Type</label>
+                <div className="flex gap-2">
+                  {["Reusable", "Custom"].map(type => (
+                    <button
+                      key={type}
+                      type="button"
+                      onClick={() => handleChange("service_type", type)}
+                      className={`flex-1 py-2 rounded-xl text-sm font-semibold transition ${
+                        tempService.service_type === type
+                          ? "bg-sky-500 text-black"
+                          : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
+                      }`}
+                    >
+                      {type}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               <div>

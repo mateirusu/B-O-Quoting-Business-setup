@@ -7,6 +7,8 @@ export default function MaterialServiceLink({
   serviceId,
   profile,
   onSave,
+  deferredMode = false,
+  initialState = null,
 }) {
   const [linkedMaterials, setLinkedMaterials] = useState([]);
   const [allMaterials, setAllMaterials] = useState([]);
@@ -130,7 +132,12 @@ export default function MaterialServiceLink({
     if (isOpen) {
       setPendingDeleteLinkIds([]);
       fetchAllMaterials();
-      if (serviceId) {
+      if (deferredMode && initialState !== null) {
+        // Restore previously saved deferred state (preserves deletions and original baselines)
+        setLinkedMaterials(initialState.materials ?? []);
+        setOriginalMaterials(initialState.originalMaterials ?? []);
+        setPendingDeleteLinkIds(initialState.pendingDeleteLinkIds ?? []);
+      } else if (serviceId) {
         fetchLinkedMaterials();
       } else {
         setLinkedMaterials([]);
@@ -427,6 +434,17 @@ export default function MaterialServiceLink({
 
   // Save all changes — mode: 'update' edits existing records, 'create-new' duplicates them
   const saveChanges = async (mode = 'update') => {
+    // Deferred mode: return state to caller without writing to DB
+    if (deferredMode) {
+      if (onSave) onSave({
+        materials: [...linkedMaterials],
+        originalMaterials: [...originalMaterials],
+        pendingDeleteLinkIds: [...pendingDeleteLinkIds],
+      });
+      onClose();
+      return;
+    }
+
     if (!serviceId) {
       onClose();
       return;
@@ -447,7 +465,6 @@ export default function MaterialServiceLink({
 
       for (let i = 0; i < linkedMaterials.length; i++) {
         const material = linkedMaterials[i];
-        const original = originalMaterials[i];
 
         if (!material.materialId && !material.name.trim()) continue;
 
@@ -577,7 +594,7 @@ export default function MaterialServiceLink({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[70] bg-black/70 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[80] bg-black/70 flex items-center justify-center p-4">
       <div className="bg-zinc-900 rounded-2xl w-full max-w-4xl" style={{ height: '85vh', display: 'flex', flexDirection: 'column' }}>
 
         {/* Sticky header */}
@@ -813,7 +830,7 @@ export default function MaterialServiceLink({
           </button>
           <button
             onClick={() => {
-              if (hasModifiedExistingMaterials()) {
+              if (!deferredMode && hasModifiedExistingMaterials()) {
                 setShowSaveDialog(true);
               } else {
                 saveChanges('update');

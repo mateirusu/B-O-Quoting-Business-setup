@@ -1,27 +1,32 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
 import { supabase } from "../supabaseClient";
+import JobsTable from "../components/JobsTable";
+import AddJobModal from "../components/AddJobModal";
 
 export default function CustomerJobs() {
   const { customerId } = useParams();
-  const [jobs, setJobs]     = useState([]);
+  const { profile }    = useAuth();
+  const [jobs,    setJobs]    = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError]   = useState(null);
-  const [search, setSearch] = useState("");
+  const [error,   setError]   = useState(null);
+  const [search,  setSearch]  = useState("");
+  const [modal,   setModal]   = useState(false);
 
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      const { data, error } = await supabase
-        .from("job")
-        .select("job_id, title, description, town_city, postcode, created_at")
-        .eq("customer_id", customerId)
-        .order("created_at", { ascending: false });
-      if (error) setError("Failed to load jobs.");
-      else setJobs(data ?? []);
-      setLoading(false);
-    })();
-  }, [customerId]);
+  const loadJobs = async () => {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from("job")
+      .select("job_id, title, description, town_city, postcode, created_at")
+      .eq("customer_id", customerId)
+      .order("created_at", { ascending: false });
+    if (error) setError("Failed to load jobs.");
+    else setJobs(data ?? []);
+    setLoading(false);
+  };
+
+  useEffect(() => { loadJobs(); }, [customerId]);
 
   if (loading) return <p className="text-zinc-400 text-sm">Loading jobs…</p>;
   if (error)   return <p className="text-red-400 text-sm">{error}</p>;
@@ -39,6 +44,9 @@ export default function CustomerJobs() {
     <div>
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-2xl font-bold text-white">Jobs</h2>
+        <button onClick={() => setModal(true)} className="px-4 py-2 bg-sky-500 text-black font-semibold rounded-xl hover:bg-sky-400 transition text-sm">
+          + Add Job
+        </button>
       </div>
 
       <div className="mb-4">
@@ -55,29 +63,16 @@ export default function CustomerJobs() {
       ) : filtered.length === 0 ? (
         <p className="text-zinc-400 text-sm">No jobs match your search.</p>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-zinc-700">
-          <table className="w-full text-sm text-left">
-            <thead className="bg-zinc-800 text-zinc-400 uppercase text-xs">
-              <tr>
-                <th className="px-4 py-3">Title</th>
-                <th className="px-4 py-3">Town / City</th>
-                <th className="px-4 py-3">Postcode</th>
-                <th className="px-4 py-3">Created</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-700">
-              {filtered.map(j => (
-                <tr key={j.job_id} className="hover:bg-zinc-800 transition">
-                  <td className="px-4 py-3 text-white font-medium">{j.title}</td>
-                  <td className="px-4 py-3 text-zinc-300">{j.town_city || "—"}</td>
-                  <td className="px-4 py-3 text-zinc-300">{j.postcode  || "—"}</td>
-                  <td className="px-4 py-3 text-zinc-400">{new Date(j.created_at).toLocaleDateString("en-GB")}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <JobsTable jobs={filtered} showCustomer={false} />
       )}
+
+      <AddJobModal
+        isOpen={modal}
+        onClose={() => setModal(false)}
+        onSaved={loadJobs}
+        profile={profile}
+        fixedCustomerId={customerId}
+      />
     </div>
   );
 }

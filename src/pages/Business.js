@@ -20,8 +20,7 @@ const empty = {
 };
 
 const SECTION_KEYS = {
-  name:    ["business_name"],
-  contact: ["phone", "email", "website"],
+  contact: ["business_name", "phone", "email", "website"],
   address: ["business_first_line", "business_second_line", "business_towncity", "business_county", "business_country", "business_postcode"],
   legal:   ["vat_registered", "vat_number", "company_reg_number"],
 };
@@ -36,9 +35,9 @@ export default function Business() {
   const [open, setOpen] = useState({ contact: false, address: false, legal: false });
 
   // Per-section save state
-  const [sectionSaving, setSectionSaving] = useState({ name: false, contact: false, address: false, legal: false });
-  const [sectionMsg,    setSectionMsg]    = useState({ name: null,  contact: null,  address: null,  legal: null  });
-  const [sectionErr,    setSectionErr]    = useState({ name: null,  contact: null,  address: null,  legal: null  });
+  const [sectionSaving, setSectionSaving] = useState({ contact: false, address: false, legal: false });
+  const [sectionMsg,    setSectionMsg]    = useState({ contact: null,  address: null,  legal: null  });
+  const [sectionErr,    setSectionErr]    = useState({ contact: null,  address: null,  legal: null  });
 
   // Address view: 'lookup' | 'form' | 'display'
   const [addressView, setAddressView] = useState("lookup");
@@ -201,24 +200,6 @@ export default function Business() {
   return (
     <div className="space-y-6">
 
-      {/* ── Business Name ── */}
-      <div className="rounded-3xl border border-zinc-800 bg-zinc-900">
-        <div className="p-5 space-y-4">
-          <div>
-            <h3 className="text-sm text-zinc-300 mb-2">
-              Business Name <span className="text-red-400">*</span>
-            </h3>
-            <input
-              value={fields.business_name}
-              onChange={e => handleChange("business_name", e.target.value)}
-              className="w-full rounded-xl bg-zinc-950 p-3 text-white"
-              placeholder="Your business name"
-            />
-          </div>
-          <SectionFooter section="name" showSave />
-        </div>
-      </div>
-
       {/* ── Contact ── */}
       <div className="rounded-3xl border border-zinc-800 bg-zinc-900">
         <div className="flex justify-between p-5 cursor-pointer" onClick={() => toggle("contact")}>
@@ -227,6 +208,10 @@ export default function Business() {
         </div>
         {open.contact && (
           <div className="border-t border-zinc-800 p-5 space-y-4">
+            <div>
+              <h3 className="text-sm text-zinc-300 mb-2">Business Name <span className="text-red-400">*</span></h3>
+              <input value={fields.business_name} onChange={e => handleChange("business_name", e.target.value)} className="w-full p-3 rounded-xl bg-zinc-950 text-white" placeholder="Your business name" />
+            </div>
             <div className="grid md:grid-cols-2 gap-4">
               <div>
                 <h3 className="text-sm text-zinc-300 mb-2">Phone</h3>

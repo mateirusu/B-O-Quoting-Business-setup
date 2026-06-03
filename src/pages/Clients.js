@@ -169,7 +169,7 @@ export default function Clients() {
                 <th className="px-4 py-3">Town / City</th>
                 <th className="px-4 py-3">Postcode</th>
                 <th className="px-4 py-3">Added</th>
-                <th className="px-4 py-3"></th>
+                <th className="px-4 py-3 w-20"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-700">
@@ -186,8 +186,6 @@ export default function Clients() {
                   <td className="px-4 py-3">
                     <div className="flex gap-2 justify-end">
                       <button onClick={() => navigate(`/crm/clients/${c.customer_id}`)} className="px-3 py-1 text-xs rounded-lg bg-sky-500 text-black font-semibold hover:bg-sky-400 transition">View</button>
-                      <button onClick={() => openEdit(c.customer_id)} className="px-3 py-1 text-xs rounded-lg bg-sky-500 text-black font-semibold hover:bg-sky-400 transition">Edit</button>
-                      <button onClick={() => setDeleteId(c.customer_id)} className="px-3 py-1 text-xs rounded-lg bg-red-600 text-white font-semibold hover:bg-red-500 transition">Delete</button>
                     </div>
                   </td>
                 </tr>
