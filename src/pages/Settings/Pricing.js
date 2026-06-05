@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
-import { useAuth } from "../context/AuthContext";
-import { supabase } from "../supabaseClient";
+import { useAuth } from "../../context/AuthContext";
+import { supabase } from "../../supabaseClient";
 
 export default function Pricing() {
   const { profile, loading: authLoading } = useAuth();

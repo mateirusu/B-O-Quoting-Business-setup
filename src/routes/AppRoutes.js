@@ -1,14 +1,15 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import BusinessGate from "../components/BusinessGate";
 import ProtectedRoute from "../components/ProtectedRoute";
-import Dashboard from "../pages/Dashboard";
-import Login from "../pages/Login";
-import Register from "../pages/Register";
-import SetPassword from "../pages/SetPassword";
-import Settings from "../pages/Settings";
-import CRM from "../pages/CRM";
-import CustomerView from "../pages/CustomerView";
-import Schedule from "../pages/Schedule";
+import Dashboard from "../pages/Dashboard/Dashboard";
+import Login from "../pages/Registration&Login/Login";
+import Register from "../pages/Registration&Login/Register";
+import SetPassword from "../pages/Registration&Login/SetPassword";
+import Settings from "../pages/Settings/Settings";
+import CRM from "../pages/CRM/CRM";
+import CustomerView from "../pages/CRM/Client/ClientView";
+import JobView from "../pages/CRM/Job/JobView";
+import Schedule from "../pages/Schedule/Schedule";
 
 export default function AppRoutes() {
   return (
@@ -42,6 +43,16 @@ export default function AppRoutes() {
           <ProtectedRoute>
             <BusinessGate>
               <CustomerView />
+            </BusinessGate>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/crm/jobs/:jobId"
+        element={
+          <ProtectedRoute>
+            <BusinessGate>
+              <JobView />
             </BusinessGate>
           </ProtectedRoute>
         }

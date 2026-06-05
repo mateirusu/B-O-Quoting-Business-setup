@@ -1,10 +1,11 @@
 import { useState } from "react";
-import PageHeader from "../components/PageHeader";
+import PageHeader from "../../components/PageHeader";
 import Profile from "./Profile";
 import Pricing from "./Pricing";
-import Services from "./Services";
+import Services from "./Services/Services";
 import Materials from "./Materials";
 import Business from "./Business";
+import Engineers from "./Engineers";
 
 export default function Settings() {
   const [activeTab, setActiveTab] = useState("Pricing");
@@ -20,7 +21,7 @@ export default function Settings() {
       case "Business":
         return <Business />;
       case "Engineers":
-        return <div className="text-slate-300">Engineers settings will be displayed here.</div>;
+        return <Engineers />;
       case "Profile":
         return <Profile />;
       default:

@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { useNavigate, Navigate } from "react-router-dom";
 import { Eye, EyeOff } from "lucide-react";
-import { supabase } from "../supabaseClient";
-import { useAuth } from "../context/AuthContext";
+import { supabase } from "../../supabaseClient";
+import { useAuth } from "../../context/AuthContext";
 
 export default function Login() {
   const navigate = useNavigate();

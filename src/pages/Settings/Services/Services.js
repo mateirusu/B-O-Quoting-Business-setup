@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useAuth } from "../context/AuthContext";
-import { supabase } from "../supabaseClient";
+import { useAuth } from "../../../context/AuthContext";
+import { supabase } from "../../../supabaseClient";
 import MaterialServiceLink from "./MaterialServiceLink";
-import { fetchPexelsImage } from "../utils/pexelsImage";
+import { fetchPexelsImage } from "../../../utils/pexelsImage";
 
 export default function Services() {
   const { profile, loading: authLoading } = useAuth();

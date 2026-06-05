@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react"; // useCallback kept for fetchAllMaterials / fetchLinkedMaterials
-import { supabase } from "../supabaseClient";
+import { supabase } from "../../../supabaseClient";
 
 export default function MaterialServiceLink({
   isOpen,

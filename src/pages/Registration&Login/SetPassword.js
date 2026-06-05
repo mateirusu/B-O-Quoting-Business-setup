@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Eye, EyeOff } from "lucide-react";
-import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY } from "../supabaseClient";
+import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY } from "../../supabaseClient";
 
 export default function SetPassword() {
   const navigate = useNavigate();

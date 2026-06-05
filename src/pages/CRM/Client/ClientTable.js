@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useAuth } from "../context/AuthContext";
-import { supabase } from "../supabaseClient";
-import AddressLookup from "../components/AddressLookup";
+import { useAuth } from "../../../context/AuthContext";
+import { supabase } from "../../../supabaseClient";
+import AddressLookup from "../../../components/AddressLookup";
 
 const emptyForm = {
   first_name: "", last_name: "", email: "", phone: "",

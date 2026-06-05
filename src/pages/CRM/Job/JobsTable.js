@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { useAuth } from "../context/AuthContext";
-import { supabase } from "../supabaseClient";
-import JobsTable from "../components/JobsTable";
-import AddJobModal from "../components/AddJobModal";
+import { useAuth } from "../../../context/AuthContext";
+import { supabase } from "../../../supabaseClient";
+import JobsTable from "../../../components/JobsTable";
+import AddJobModal from "../../../components/AddJobModal";
 
 export default function Jobs() {
   const { profile } = useAuth();

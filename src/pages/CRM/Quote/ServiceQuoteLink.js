@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { supabase } from "../supabaseClient";
-import MaterialServiceLink from "./MaterialServiceLink";
+import { supabase } from "../../../supabaseClient";
+import MaterialServiceLink from "../../Settings/Services/MaterialServiceLink";
 
 /**
  * ServiceQuoteLink — modal for assigning services to a quote.

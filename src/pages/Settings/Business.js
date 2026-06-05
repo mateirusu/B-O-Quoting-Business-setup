@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { useAuth } from "../context/AuthContext";
-import { supabase } from "../supabaseClient";
-import AddressLookup from "../components/AddressLookup";
+import { useAuth } from "../../context/AuthContext";
+import { supabase } from "../../supabaseClient";
+import AddressLookup from "../../components/AddressLookup";
 
 const empty = {
   business_name:        "",

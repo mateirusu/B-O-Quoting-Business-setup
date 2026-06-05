@@ -1,26 +1,28 @@
 import { useState } from "react";
-import PageHeader from "../components/PageHeader";
-import CustomerDetails from "./CustomerDetails";
-import CustomerJobs from "./CustomerJobs";
+import PageHeader from "../../components/PageHeader";
+import Clients from "./Client/ClientTable";
+import Jobs from "./Job/JobsTable";
+import Quotes from "./Quote/Quotes";
 
-export default function CustomerView() {
-  const [activeTab, setActiveTab] = useState("Client Details");
+export default function CRM() {
+  const [activeTab, setActiveTab] = useState("Clients");
 
   const renderContent = () => {
     switch (activeTab) {
-      case "Client Details": return <CustomerDetails />;
-      case "Jobs":           return <CustomerJobs />;
-      default:               return null;
+      case "Clients": return <Clients />;
+      case "Jobs":    return <Jobs />;
+      case "Quotes":  return <Quotes />;
+      default:        return null;
     }
   };
 
   return (
     <div className="min-h-screen bg-black text-white p-6">
-      <PageHeader title="Client" />
+      <PageHeader title="CRM" />
 
       <div className="flex gap-6">
         <aside style={{ width: "10%" }} className="bg-zinc-900 rounded-2xl p-4 space-y-3">
-          {["Client Details", "Jobs"].map(tab => (
+          {["Clients", "Jobs", "Quotes"].map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}

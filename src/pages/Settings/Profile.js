@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Eye, EyeOff } from "lucide-react";
-import { useAuth } from "../context/AuthContext";
-import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY } from "../supabaseClient";
+import { useAuth } from "../../context/AuthContext";
+import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY } from "../../supabaseClient";
 
 export default function Profile() {
   const { session, profile, refreshProfile } = useAuth();

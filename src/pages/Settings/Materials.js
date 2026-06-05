@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useAuth } from "../context/AuthContext";
-import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY } from "../supabaseClient";
-import { fetchPexelsImage } from "../utils/pexelsImage";
+import { useAuth } from "../../context/AuthContext";
+import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY } from "../../supabaseClient";
+import { fetchPexelsImage } from "../../utils/pexelsImage";
 
 export default function Materials() {
   const { profile, loading: authLoading } = useAuth();

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../supabaseClient";
 import AddressLookup from "./AddressLookup";
-import ServiceQuoteLink from "../pages/ServiceQuoteLink";
+import ServiceQuoteLink from "../pages/CRM/Quote/ServiceQuoteLink";
 
 const emptyForm = {
   customer_id:   "",
