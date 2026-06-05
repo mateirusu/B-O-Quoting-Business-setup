@@ -9,7 +9,6 @@ export default function Jobs() {
   const [jobs,    setJobs]    = useState([]);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState(null);
-  const [search,  setSearch]  = useState("");
   const [modal,   setModal]   = useState(false);
 
   const loadJobs = async () => {
@@ -25,21 +24,8 @@ export default function Jobs() {
 
   useEffect(() => { loadJobs(); }, [profile?.business_id]);
 
-  const customerName = c =>
-    [c?.first_name, c?.last_name].filter(Boolean).join(" ") || "Unnamed";
-
   if (loading) return <p className="text-zinc-400 text-sm">Loading jobs…</p>;
   if (error)   return <p className="text-red-400 text-sm">{error}</p>;
-
-  const q = search.toLowerCase();
-  const filtered = q
-    ? jobs.filter(j =>
-        j.title?.toLowerCase().includes(q) ||
-        customerName(j.customer).toLowerCase().includes(q) ||
-        j.town_city?.toLowerCase().includes(q) ||
-        j.postcode?.toLowerCase().includes(q)
-      )
-    : jobs;
 
   return (
     <div>
@@ -50,22 +36,7 @@ export default function Jobs() {
         </button>
       </div>
 
-      <div className="mb-4">
-        <input
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder="Search by title, customer, town or postcode…"
-          className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm"
-        />
-      </div>
-
-      {jobs.length === 0 ? (
-        <p className="text-zinc-400 text-sm">No jobs yet. Add your first one.</p>
-      ) : filtered.length === 0 ? (
-        <p className="text-zinc-400 text-sm">No jobs match your search.</p>
-      ) : (
-        <JobsTable jobs={filtered} showCustomer={true} />
-      )}
+      <JobsTable jobs={jobs} showCustomer={true} emptyMessage="No jobs yet. Add your first one." />
 
       <AddJobModal
         isOpen={modal}

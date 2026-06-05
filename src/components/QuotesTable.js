@@ -4,13 +4,40 @@ import { useNavigate } from "react-router-dom";
 const customerName = c =>
   [c?.first_name, c?.last_name].filter(Boolean).join(" ") || "Unnamed";
 
-export default function JobsTable({ jobs, showCustomer = true, emptyMessage = "No jobs yet." }) {
+const statusColour = s => {
+  switch (s?.toLowerCase()) {
+    case "accepted": return "text-emerald-400";
+    case "rejected": return "text-red-400";
+    case "sent":     return "text-sky-400";
+    default:         return "text-zinc-400";
+  }
+};
+
+const formatAddressParts = job => {
+  if (!job) return [];
+  return [
+    [job.address_line1, job.address_line2].filter(Boolean).join(", "),
+    [job.town_city, job.postcode].filter(Boolean).join(" "),
+    job.county,
+    job.country,
+  ].filter(Boolean);
+};
+
+const STATUS_OPTIONS = ["All", "Draft", "Sent", "Accepted", "Rejected"];
+
+export default function QuotesTable({
+  quotes,
+  showCustomer = true,
+  showJob      = true,
+  emptyMessage = "No quotes yet.",
+}) {
   const navigate = useNavigate();
 
-  const [search,      setSearch]      = useState("");
-  const [dateFrom,    setDateFrom]    = useState("");
-  const [dateTo,      setDateTo]      = useState("");
-  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [search,       setSearch]       = useState("");
+  const [statusFilter, setStatusFilter] = useState("Draft");
+  const [dateFrom,     setDateFrom]     = useState("");
+  const [dateTo,       setDateTo]       = useState("");
+  const [filtersOpen,  setFiltersOpen]  = useState(false);
 
   const bubbleRef = useRef(null);
   const btnRef    = useRef(null);
@@ -27,26 +54,30 @@ export default function JobsTable({ jobs, showCustomer = true, emptyMessage = "N
     return () => document.removeEventListener("mousedown", handler);
   }, [filtersOpen]);
 
-  const hasActiveFilters = !!dateFrom || !!dateTo;
+  const hasNonDefaultFilters = statusFilter !== "Draft" || !!dateFrom || !!dateTo;
 
-  const filtered = jobs.filter(j => {
+  const filtered = quotes.filter(q => {
+    if (statusFilter !== "All") {
+      const qs = q.status?.toLowerCase() || "draft";
+      if (qs !== statusFilter.toLowerCase()) return false;
+    }
     if (dateFrom) {
       const from = new Date(dateFrom);
       from.setHours(0, 0, 0, 0);
-      if (new Date(j.created_at) < from) return false;
+      if (new Date(q.created_at) < from) return false;
     }
     if (dateTo) {
       const to = new Date(dateTo);
       to.setHours(23, 59, 59, 999);
-      if (new Date(j.created_at) > to) return false;
+      if (new Date(q.created_at) > to) return false;
     }
     if (search) {
       const s = search.toLowerCase();
       const match =
-        j.title?.toLowerCase().includes(s) ||
-        j.town_city?.toLowerCase().includes(s) ||
-        j.postcode?.toLowerCase().includes(s) ||
-        (showCustomer && customerName(j.customer).toLowerCase().includes(s));
+        q.title?.toLowerCase().includes(s) ||
+        [q.customer?.first_name, q.customer?.last_name].filter(Boolean).join(" ").toLowerCase().includes(s) ||
+        q.job?.title?.toLowerCase().includes(s) ||
+        (q.status || "draft").toLowerCase().includes(s);
       if (!match) return false;
     }
     return true;
@@ -60,11 +91,7 @@ export default function JobsTable({ jobs, showCustomer = true, emptyMessage = "N
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder={
-              showCustomer
-                ? "Search by title, customer, town or postcode…"
-                : "Search by title, town or postcode…"
-            }
+            placeholder="Search quotes…"
             className="flex-1 p-3 rounded-xl bg-zinc-950 text-white text-sm"
           />
           <button
@@ -78,7 +105,7 @@ export default function JobsTable({ jobs, showCustomer = true, emptyMessage = "N
             }`}
           >
             Filters
-            {hasActiveFilters && (
+            {hasNonDefaultFilters && (
               <span style={{
                 position: "absolute", top: "-4px", right: "-4px",
                 width: "8px", height: "8px", borderRadius: "50%",
@@ -97,7 +124,7 @@ export default function JobsTable({ jobs, showCustomer = true, emptyMessage = "N
               top: "calc(100% + 10px)",
               right: 0,
               zIndex: 40,
-              width: "260px",
+              width: "300px",
               background: "#18181b",
               border: "1px solid #3f3f46",
               borderRadius: "16px",
@@ -105,6 +132,7 @@ export default function JobsTable({ jobs, showCustomer = true, emptyMessage = "N
               padding: "16px",
             }}
           >
+            {/* Arrow pointing up to button */}
             <div style={{
               position: "absolute", top: "-8px", right: "38px",
               width: 0, height: 0,
@@ -120,6 +148,38 @@ export default function JobsTable({ jobs, showCustomer = true, emptyMessage = "N
               borderBottom: "7px solid #18181b",
             }} />
 
+            {/* Status filter */}
+            <div style={{ marginBottom: "14px" }}>
+              <p style={{
+                fontSize: "11px", color: "#71717a", textTransform: "uppercase",
+                fontWeight: 700, marginBottom: "8px", letterSpacing: "0.06em",
+              }}>
+                Status
+              </p>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                {STATUS_OPTIONS.map(s => (
+                  <button
+                    key={s}
+                    onClick={() => setStatusFilter(s)}
+                    style={{
+                      padding: "4px 12px",
+                      borderRadius: "999px",
+                      fontSize: "12px",
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      border: "none",
+                      background: statusFilter === s ? "#0ea5e9" : "#27272a",
+                      color: statusFilter === s ? "#000" : "#d4d4d8",
+                      transition: "background 0.15s",
+                    }}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Date range */}
             <div style={{ marginBottom: "14px" }}>
               <p style={{
                 fontSize: "11px", color: "#71717a", textTransform: "uppercase",
@@ -159,24 +219,29 @@ export default function JobsTable({ jobs, showCustomer = true, emptyMessage = "N
               </div>
             </div>
 
+            {/* Footer */}
             <div style={{
               display: "flex", justifyContent: "space-between", alignItems: "center",
               paddingTop: "10px", borderTop: "1px solid #27272a",
             }}>
               <button
-                onClick={() => { setDateFrom(""); setDateTo(""); }}
-                style={{ fontSize: "12px", color: "#71717a", background: "none", border: "none", cursor: "pointer", padding: 0 }}
+                onClick={() => { setStatusFilter("Draft"); setDateFrom(""); setDateTo(""); }}
+                style={{
+                  fontSize: "12px", color: "#71717a", background: "none",
+                  border: "none", cursor: "pointer", padding: 0,
+                }}
                 onMouseEnter={e => (e.target.style.color = "#fff")}
                 onMouseLeave={e => (e.target.style.color = "#71717a")}
               >
-                Clear dates
+                Reset to defaults
               </button>
               <button
                 onClick={() => setFiltersOpen(false)}
                 style={{
                   padding: "4px 14px", borderRadius: "10px",
                   background: "#0ea5e9", color: "#000",
-                  fontSize: "12px", fontWeight: 700, border: "none", cursor: "pointer",
+                  fontSize: "12px", fontWeight: 700,
+                  border: "none", cursor: "pointer",
                 }}
                 onMouseEnter={e => (e.target.style.background = "#38bdf8")}
                 onMouseLeave={e => (e.target.style.background = "#0ea5e9")}
@@ -191,7 +256,7 @@ export default function JobsTable({ jobs, showCustomer = true, emptyMessage = "N
       {/* ── Table ── */}
       {filtered.length === 0 ? (
         <p className="text-zinc-400 text-sm">
-          {jobs.length === 0 ? emptyMessage : "No jobs match your filters."}
+          {quotes.length === 0 ? emptyMessage : "No quotes match your filters."}
         </p>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-zinc-700">
@@ -200,34 +265,53 @@ export default function JobsTable({ jobs, showCustomer = true, emptyMessage = "N
               <tr>
                 <th className="px-4 py-3">Title</th>
                 {showCustomer && <th className="px-4 py-3">Customer</th>}
-                <th className="px-4 py-3">Town / City</th>
-                <th className="px-4 py-3">Postcode</th>
+                {showJob      && <th className="px-4 py-3">Job</th>}
+                <th className="px-4 py-3">Address</th>
+                <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Created</th>
                 <th className="px-4 py-3 w-20"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-700">
-              {filtered.map(j => (
-                <tr key={j.job_id} className="hover:bg-zinc-800 transition">
-                  <td className="px-4 py-3 text-white font-medium">{j.title}</td>
-                  {showCustomer && (
-                    <td className="px-4 py-3 text-zinc-300">{customerName(j.customer)}</td>
-                  )}
-                  <td className="px-4 py-3 text-zinc-300">{j.town_city || "—"}</td>
-                  <td className="px-4 py-3 text-zinc-300">{j.postcode  || "—"}</td>
-                  <td className="px-4 py-3 text-zinc-400">{new Date(j.created_at).toLocaleDateString("en-GB")}</td>
-                  <td className="px-4 py-3">
-                    <div className="flex justify-end">
-                      <button
-                        onClick={() => navigate(`/crm/jobs/${j.job_id}`)}
-                        className="px-3 py-1 text-xs rounded-lg bg-sky-500 text-black font-semibold hover:bg-sky-400 transition"
-                      >
-                        View
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {filtered.map(q => {
+                const addrParts = formatAddressParts(q.job);
+                return (
+                  <tr key={q.quote_id} className="hover:bg-zinc-800 transition">
+                    <td className="px-4 py-3 text-white font-medium">{q.title || "Untitled"}</td>
+                    {showCustomer && (
+                      <td className="px-4 py-3 text-zinc-300">{customerName(q.customer)}</td>
+                    )}
+                    {showJob && (
+                      <td className="px-4 py-3 text-zinc-300">{q.job?.title || "—"}</td>
+                    )}
+                    <td className="px-4 py-3 text-zinc-300">
+                      {addrParts.length > 0 ? (
+                        <div>
+                          {addrParts.map((p, i) => (
+                            <div key={i} style={{ fontSize: "12px", lineHeight: "1.5" }}>{p}</div>
+                          ))}
+                        </div>
+                      ) : "—"}
+                    </td>
+                    <td className={`px-4 py-3 capitalize ${statusColour(q.status)}`}>
+                      {q.status || "Draft"}
+                    </td>
+                    <td className="px-4 py-3 text-zinc-400">
+                      {new Date(q.created_at).toLocaleDateString("en-GB")}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex justify-end">
+                        <button
+                          onClick={() => navigate(`/crm/quotes/${q.quote_id}`)}
+                          className="px-3 py-1 text-xs rounded-lg bg-sky-500 text-black font-semibold hover:bg-sky-400 transition"
+                        >
+                          View
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

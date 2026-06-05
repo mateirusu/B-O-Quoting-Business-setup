@@ -9,6 +9,9 @@ export default function Services() {
 
   const [search, setSearch] = useState("");
   const [serviceTypeFilter, setServiceTypeFilter] = useState("Reusable");
+  const [dateFrom,    setDateFrom]    = useState("");
+  const [dateTo,      setDateTo]      = useState("");
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [services, setServices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -38,7 +41,9 @@ export default function Services() {
   const [imageFile, setImageFile] = useState(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [fetchingImage, setFetchingImage] = useState(false);
-  const pexelsPageRef = useRef(1);
+  const pexelsPageRef   = useRef(1);
+  const filterBtnRef    = useRef(null);
+  const filterBubbleRef = useRef(null);
   const [serviceToDelete, setServiceToDelete] = useState(null);
   const [descriptionPopup, setDescriptionPopup] = useState(null);
 
@@ -124,14 +129,26 @@ export default function Services() {
   }, [profile?.business_id]);
 
   useEffect(() => {
-  if (!authLoading && profile?.business_id) {
-    fetchHourlyRate();
-    fetchServices();
-    fetchAllServicesMaterialsTotals();
-  } else if (!authLoading) {
-    setLoading(false);
-  }
-}, [authLoading, profile?.business_id, fetchHourlyRate, fetchServices, fetchAllServicesMaterialsTotals]);
+    if (!authLoading && profile?.business_id) {
+      fetchHourlyRate();
+      fetchServices();
+      fetchAllServicesMaterialsTotals();
+    } else if (!authLoading) {
+      setLoading(false);
+    }
+  }, [authLoading, profile?.business_id, fetchHourlyRate, fetchServices, fetchAllServicesMaterialsTotals]);
+
+  useEffect(() => {
+    const handler = e => {
+      if (
+        filtersOpen &&
+        filterBubbleRef.current && !filterBubbleRef.current.contains(e.target) &&
+        filterBtnRef.current    && !filterBtnRef.current.contains(e.target)
+      ) setFiltersOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [filtersOpen]);
 
   const sanitizeNumberInput = (value) => {
     if (!value) return "";
@@ -510,10 +527,22 @@ export default function Services() {
     }
   };
 
+  const hasNonDefaultFilters = serviceTypeFilter !== "Reusable" || !!dateFrom || !!dateTo;
+
   const filteredServices = services.filter((s) => {
-    const matchSearch = s.title.toLowerCase().includes(search.toLowerCase());
-    const matchType   = serviceTypeFilter === "All" || s.service_type === serviceTypeFilter;
-    return matchSearch && matchType;
+    if (!s.title.toLowerCase().includes(search.toLowerCase())) return false;
+    if (serviceTypeFilter !== "All" && s.service_type !== serviceTypeFilter) return false;
+    if (dateFrom) {
+      const from = new Date(dateFrom);
+      from.setHours(0, 0, 0, 0);
+      if (new Date(s.created_at) < from) return false;
+    }
+    if (dateTo) {
+      const to = new Date(dateTo);
+      to.setHours(23, 59, 59, 999);
+      if (new Date(s.created_at) > to) return false;
+    }
+    return true;
   });
 
   if (authLoading || loading) {
@@ -544,37 +573,173 @@ export default function Services() {
       )}
 
       {/* SEARCH, FILTERS AND ADD BUTTON */}
-      <div className="space-y-3">
-        <div className="flex gap-4">
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search services..."
-            className="w-full p-3 rounded-xl bg-zinc-900 border border-zinc-700"
-          />
-          <button
-            onClick={openAddModal}
-            className="px-5 py-3 bg-sky-400 text-black rounded-xl font-bold whitespace-nowrap"
-          >
-            + Add New
-          </button>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-zinc-400">Type:</span>
-          {["All", "Reusable", "Custom"].map(type => (
+      <div className="flex gap-4">
+        {/* Search + filter bubble wrapper */}
+        <div style={{ position: "relative", flex: 1 }}>
+          <div className="flex items-center gap-2">
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search services..."
+              className="flex-1 p-3 rounded-xl bg-zinc-900 border border-zinc-700"
+            />
             <button
-              key={type}
-              onClick={() => setServiceTypeFilter(type)}
-              className={`px-3 py-1.5 text-xs rounded-lg font-semibold transition ${
-                serviceTypeFilter === type
+              ref={filterBtnRef}
+              onClick={() => setFiltersOpen(p => !p)}
+              style={{ position: "relative", flexShrink: 0 }}
+              className={`px-4 py-3 rounded-xl text-sm font-semibold transition ${
+                filtersOpen
                   ? "bg-sky-500 text-black"
-                  : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
+                  : "bg-zinc-800 text-white hover:bg-zinc-700"
               }`}
             >
-              {type}
+              Filters
+              {hasNonDefaultFilters && (
+                <span style={{
+                  position: "absolute", top: "-4px", right: "-4px",
+                  width: "8px", height: "8px", borderRadius: "50%",
+                  background: "#f87171",
+                }} />
+              )}
             </button>
-          ))}
+          </div>
+
+          {/* Filter bubble */}
+          {filtersOpen && (
+            <div
+              ref={filterBubbleRef}
+              style={{
+                position: "absolute",
+                top: "calc(100% + 10px)",
+                right: 0,
+                zIndex: 40,
+                width: "280px",
+                background: "#18181b",
+                border: "1px solid #3f3f46",
+                borderRadius: "16px",
+                boxShadow: "0 8px 32px rgba(0,0,0,0.65)",
+                padding: "16px",
+              }}
+            >
+              <div style={{
+                position: "absolute", top: "-8px", right: "38px",
+                width: 0, height: 0,
+                borderLeft: "8px solid transparent",
+                borderRight: "8px solid transparent",
+                borderBottom: "8px solid #3f3f46",
+              }} />
+              <div style={{
+                position: "absolute", top: "-7px", right: "39px",
+                width: 0, height: 0,
+                borderLeft: "7px solid transparent",
+                borderRight: "7px solid transparent",
+                borderBottom: "7px solid #18181b",
+              }} />
+
+              {/* Type filter */}
+              <div style={{ marginBottom: "14px" }}>
+                <p style={{
+                  fontSize: "11px", color: "#71717a", textTransform: "uppercase",
+                  fontWeight: 700, marginBottom: "8px", letterSpacing: "0.06em",
+                }}>
+                  Type
+                </p>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                  {["All", "Reusable", "Custom"].map(t => (
+                    <button
+                      key={t}
+                      onClick={() => setServiceTypeFilter(t)}
+                      style={{
+                        padding: "4px 12px", borderRadius: "999px",
+                        fontSize: "12px", fontWeight: 600,
+                        cursor: "pointer", border: "none",
+                        background: serviceTypeFilter === t ? "#0ea5e9" : "#27272a",
+                        color:      serviceTypeFilter === t ? "#000"    : "#d4d4d8",
+                        transition: "background 0.15s",
+                      }}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Date range */}
+              <div style={{ marginBottom: "14px" }}>
+                <p style={{
+                  fontSize: "11px", color: "#71717a", textTransform: "uppercase",
+                  fontWeight: 700, marginBottom: "8px", letterSpacing: "0.06em",
+                }}>
+                  Created Date
+                </p>
+                <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                  <div>
+                    <label style={{ fontSize: "11px", color: "#71717a", display: "block", marginBottom: "4px" }}>From</label>
+                    <input
+                      type="date"
+                      value={dateFrom}
+                      onChange={e => setDateFrom(e.target.value)}
+                      style={{
+                        width: "100%", padding: "8px 10px", borderRadius: "10px",
+                        background: "#09090b", border: "1px solid #3f3f46",
+                        color: "#fff", fontSize: "13px", boxSizing: "border-box",
+                        colorScheme: "dark",
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: "11px", color: "#71717a", display: "block", marginBottom: "4px" }}>To</label>
+                    <input
+                      type="date"
+                      value={dateTo}
+                      onChange={e => setDateTo(e.target.value)}
+                      style={{
+                        width: "100%", padding: "8px 10px", borderRadius: "10px",
+                        background: "#09090b", border: "1px solid #3f3f46",
+                        color: "#fff", fontSize: "13px", boxSizing: "border-box",
+                        colorScheme: "dark",
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div style={{
+                display: "flex", justifyContent: "space-between", alignItems: "center",
+                paddingTop: "10px", borderTop: "1px solid #27272a",
+              }}>
+                <button
+                  onClick={() => { setServiceTypeFilter("Reusable"); setDateFrom(""); setDateTo(""); }}
+                  style={{ fontSize: "12px", color: "#71717a", background: "none", border: "none", cursor: "pointer", padding: 0 }}
+                  onMouseEnter={e => (e.target.style.color = "#fff")}
+                  onMouseLeave={e => (e.target.style.color = "#71717a")}
+                >
+                  Reset to defaults
+                </button>
+                <button
+                  onClick={() => setFiltersOpen(false)}
+                  style={{
+                    padding: "4px 14px", borderRadius: "10px",
+                    background: "#0ea5e9", color: "#000",
+                    fontSize: "12px", fontWeight: 700, border: "none", cursor: "pointer",
+                  }}
+                  onMouseEnter={e => (e.target.style.background = "#38bdf8")}
+                  onMouseLeave={e => (e.target.style.background = "#0ea5e9")}
+                >
+                  Done
+                </button>
+              </div>
+            </div>
+          )}
         </div>
+
+        <button
+          onClick={openAddModal}
+          className="px-5 py-3 bg-sky-400 text-black rounded-xl font-bold whitespace-nowrap"
+        >
+          + Add New
+        </button>
       </div>
 
       {/* HOURLY RATE NOT SET WARNING */}
@@ -587,7 +752,7 @@ export default function Services() {
       {/* SERVICES GRID */}
       {filteredServices.length === 0 ? (
         <div className="text-center py-12 text-zinc-400">
-          {search || serviceTypeFilter !== "All"
+          {search || serviceTypeFilter !== "All" || dateFrom || dateTo
             ? "No services found matching your filters."
             : "No services added yet. Click '+ Add New' to get started."}
         </div>
@@ -625,7 +790,7 @@ export default function Services() {
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      setDescriptionPopup(s);
+                      setDescriptionPopup(prev => prev === s.service_id ? null : s.service_id);
                     }}
                     style={{
                       padding: '8px',
@@ -681,6 +846,42 @@ export default function Services() {
                   </svg>
                 </button>
               </div>
+
+              {/* Description bubble — overlays card content area on info click */}
+              {descriptionPopup === s.service_id && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: '96px',
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    background: 'rgba(9, 9, 11, 0.96)',
+                    borderTop: '1px solid #3f3f46',
+                    padding: '10px 12px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    zIndex: 5,
+                  }}
+                  onClick={e => e.stopPropagation()}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
+                    <p style={{ fontSize: '12px', color: '#e4e4e7', lineHeight: '1.5', margin: 0, flex: 1, overflowY: 'auto' }}>
+                      {s.description}
+                    </p>
+                    <button
+                      onClick={e => { e.stopPropagation(); setDescriptionPopup(null); }}
+                      style={{
+                        background: 'none', border: 'none', color: '#71717a',
+                        cursor: 'pointer', padding: '0 0 0 6px',
+                        fontSize: '14px', lineHeight: 1, flexShrink: 0,
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -710,28 +911,6 @@ export default function Services() {
                 {saving ? "Deleting..." : "Delete"}
               </button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* DESCRIPTION POPUP */}
-      {descriptionPopup && (
-        <div
-          className="fixed inset-0 z-[90] bg-black/60 flex items-center justify-center p-6"
-          onClick={() => setDescriptionPopup(null)}
-        >
-          <div
-            className="bg-zinc-900 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="text-base font-bold mb-3">{descriptionPopup.title}</h3>
-            <p className="text-sm text-zinc-300 leading-relaxed">{descriptionPopup.description}</p>
-            <button
-              onClick={() => setDescriptionPopup(null)}
-              className="mt-4 px-4 py-2 text-sm border border-zinc-600 rounded-xl hover:bg-zinc-800 w-full"
-            >
-              Close
-            </button>
           </div>
         </div>
       )}

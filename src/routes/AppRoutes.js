@@ -9,6 +9,7 @@ import Settings from "../pages/Settings/Settings";
 import CRM from "../pages/CRM/CRM";
 import CustomerView from "../pages/CRM/Client/ClientView";
 import JobView from "../pages/CRM/Job/JobView";
+import QuoteView from "../pages/CRM/Quote/QuoteView";
 import Schedule from "../pages/Schedule/Schedule";
 
 export default function AppRoutes() {
@@ -53,6 +54,16 @@ export default function AppRoutes() {
           <ProtectedRoute>
             <BusinessGate>
               <JobView />
+            </BusinessGate>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/crm/quotes/:quoteId"
+        element={
+          <ProtectedRoute>
+            <BusinessGate>
+              <QuoteView />
             </BusinessGate>
           </ProtectedRoute>
         }

@@ -11,7 +11,6 @@ export default function CustomerJobs() {
   const [jobs,    setJobs]    = useState([]);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState(null);
-  const [search,  setSearch]  = useState("");
   const [modal,   setModal]   = useState(false);
 
   const loadJobs = async () => {
@@ -31,15 +30,6 @@ export default function CustomerJobs() {
   if (loading) return <p className="text-zinc-400 text-sm">Loading jobs…</p>;
   if (error)   return <p className="text-red-400 text-sm">{error}</p>;
 
-  const q = search.toLowerCase();
-  const filtered = q
-    ? jobs.filter(j =>
-        j.title?.toLowerCase().includes(q) ||
-        j.town_city?.toLowerCase().includes(q) ||
-        j.postcode?.toLowerCase().includes(q)
-      )
-    : jobs;
-
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
@@ -49,22 +39,7 @@ export default function CustomerJobs() {
         </button>
       </div>
 
-      <div className="mb-4">
-        <input
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder="Search by title, town or postcode…"
-          className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm"
-        />
-      </div>
-
-      {jobs.length === 0 ? (
-        <p className="text-zinc-400 text-sm">No jobs for this client yet.</p>
-      ) : filtered.length === 0 ? (
-        <p className="text-zinc-400 text-sm">No jobs match your search.</p>
-      ) : (
-        <JobsTable jobs={filtered} showCustomer={false} />
-      )}
+      <JobsTable jobs={jobs} showCustomer={false} emptyMessage="No jobs for this client yet." />
 
       <AddJobModal
         isOpen={modal}
