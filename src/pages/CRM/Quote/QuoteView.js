@@ -2,6 +2,7 @@ import { useState } from "react";
 import PageHeader from "../../../components/PageHeader";
 import QuoteDetails from "./QuoteDetails";
 import QuoteServices from "./QuoteServices";
+import QuoteTimeline from "./QuoteTimeline";
 
 export default function QuoteView() {
   const [activeTab, setActiveTab] = useState("Quote Details");
@@ -10,6 +11,7 @@ export default function QuoteView() {
     switch (activeTab) {
       case "Quote Details": return <QuoteDetails />;
       case "Services":      return <QuoteServices />;
+      case "Timeline":      return <QuoteTimeline />;
       default:              return null;
     }
   };
@@ -20,7 +22,7 @@ export default function QuoteView() {
 
       <div className="flex gap-6">
         <aside style={{ width: "10%" }} className="bg-zinc-900 rounded-2xl p-4 space-y-3">
-          {["Quote Details", "Services"].map(tab => (
+          {["Quote Details", "Services", "Timeline"].map(tab => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}

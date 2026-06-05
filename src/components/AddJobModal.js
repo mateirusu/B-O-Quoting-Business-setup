@@ -112,13 +112,27 @@ export default function AddJobModal({ isOpen, onClose, onSaved, profile, fixedCu
       .from("job").insert(payload).select("job_id").single();
     if (jobErr) { setSaving(false); setFormError(jobErr.message || "Failed to save job."); return; }
 
+    // Get next quote number for this customer (per-customer sequential)
+    const customerId = fixedCustomerId || form.customer_id;
+    const { data: nextNum } = await supabase.rpc("get_next_quote_number", { p_customer_id: customerId });
+
     const quoteId = crypto.randomUUID();
     const { error: quoteErr } = await supabase
       .from("quote")
-      .insert({ quote_id: quoteId, title: form.title.trim(), description: form.description || null, status: "Draft" });
+      .insert({ quote_id: quoteId, title: form.title.trim(), description: form.description || null, status: "Draft", quote_number: nextNum || 1 });
     if (quoteErr) { setSaving(false); setFormError(quoteErr.message || "Failed to create quote."); return; }
 
     await supabase.from("job_quote_link").insert({ job_id: job.job_id, quote_id: quoteId });
+
+    // First timeline entry
+    if (profile?.business_id) {
+      await supabase.from("quote_timeline").insert({
+        quote_id:    quoteId,
+        business_id: profile.business_id,
+        status:      "Draft",
+        notes:       "Quote created",
+      });
+    }
 
     if (selectedServices.length) {
       await supabase.from("quote_service_link").insert(

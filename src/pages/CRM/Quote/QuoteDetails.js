@@ -1,6 +1,8 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+import { useAuth } from "../../../context/AuthContext";
 import { supabase } from "../../../supabaseClient";
+import { sendQuote } from "../../../utils/quoteSend";
 
 const SECTION_KEYS = {
   details: ["title", "description", "status"],
@@ -11,6 +13,7 @@ const STATUS_OPTIONS = ["Draft", "Sent", "Accepted", "Rejected"];
 export default function QuoteDetails() {
   const { quoteId } = useParams();
   const navigate    = useNavigate();
+  const { profile } = useAuth();
 
   const [quote,   setQuote]   = useState(null);
   const [job,     setJob]     = useState(null);
@@ -34,10 +37,10 @@ export default function QuoteDetails() {
     setLoading(true);
     const { data: q, error: qe } = await supabase
       .from("quote")
-      .select("quote_id, title, description, status, created_at")
+      .select("quote_id, quote_number, title, description, status, created_at")
       .eq("quote_id", quoteId)
       .single();
-    if (qe || !q) { setError("Quote not found."); setLoading(false); return; }
+    if (qe || !q) { navigate("/app", { replace: true }); return; }
     setQuote(q);
     const f = {
       title:       q.title       || "",
@@ -49,12 +52,12 @@ export default function QuoteDetails() {
 
     const { data: link } = await supabase
       .from("job_quote_link")
-      .select("job:job_id(job_id, title, town_city, postcode, customer:customer_id(customer_id, first_name, last_name))")
+      .select("job:job_id(job_id, title, town_city, postcode, customer:customer_id(customer_id, first_name, last_name, email))")
       .eq("quote_id", quoteId)
       .maybeSingle();
     setJob(link?.job || null);
     setLoading(false);
-  }, [quoteId]);
+  }, [quoteId, navigate]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -86,7 +89,33 @@ export default function QuoteDetails() {
       if (error) throw error;
       setOriginal(prev => ({ ...prev, ...update }));
       setQuote(prev => ({ ...prev, ...update }));
-      setSectionMsg(prev => ({ ...prev, [section]: "Saved successfully." }));
+
+      const statusChanged = section === "details" && update.status !== original.status;
+
+      if (statusChanged && update.status === "Sent" && original.status !== "Sent") {
+        // Status changed TO Sent — generate PDF + send email
+        setSectionMsg(prev => ({ ...prev, [section]: "Sending quote…" }));
+        try {
+          await sendQuote({ quoteId, profile, updateStatus: false });
+          setSectionMsg(prev => ({ ...prev, [section]: "Quote sent successfully and PDF emailed." }));
+        } catch (sendErr) {
+          setSectionErr(prev => ({
+            ...prev,
+            [section]: "Status saved. " + (sendErr.message || "Email/PDF failed."),
+          }));
+        }
+      } else {
+        setSectionMsg(prev => ({ ...prev, [section]: "Saved successfully." }));
+        // Record non-send status changes in timeline
+        if (statusChanged) {
+          await supabase.from("quote_timeline").insert({
+            quote_id:    quoteId,
+            business_id: profile.business_id,
+            status:      update.status,
+            notes:       `Status changed to ${update.status}`,
+          });
+        }
+      }
     } catch (err) {
       setSectionErr(prev => ({ ...prev, [section]: err.message || "Failed to save." }));
     } finally {
@@ -99,6 +128,7 @@ export default function QuoteDetails() {
     setDeleteError(null);
     try {
       await supabase.from("quote_service_link").delete().eq("quote_id", quoteId);
+      await supabase.from("quote_timeline").delete().eq("quote_id", quoteId);
       await supabase.from("job_quote_link").delete().eq("quote_id", quoteId);
       await supabase.from("quote").delete().eq("quote_id", quoteId);
       navigate("/crm");
@@ -149,6 +179,15 @@ export default function QuoteDetails() {
         </div>
         {open.details && (
           <div className="border-t border-zinc-800 p-5 space-y-4">
+
+            {/* Quote number — read-only */}
+            {quote.quote_number != null && (
+              <div>
+                <h3 className="text-sm text-zinc-400 mb-2">Quote Number</h3>
+                <p className="p-3 rounded-xl bg-zinc-950 text-zinc-300 text-sm">#{quote.quote_number}</p>
+              </div>
+            )}
+
             <div>
               <h3 className="text-sm text-zinc-300 mb-2">Title</h3>
               <input value={fields.title} onChange={e => handleChange("title", e.target.value)}
@@ -162,6 +201,11 @@ export default function QuoteDetails() {
             </div>
             <div>
               <h3 className="text-sm text-zinc-300 mb-2">Status</h3>
+              {fields.status === "Sent" && original.status !== "Sent" && (
+                <p className="text-xs text-sky-400 mb-2">
+                  Changing to "Sent" will generate a PDF and email it to the customer.
+                </p>
+              )}
               <select value={fields.status} onChange={e => handleChange("status", e.target.value)}
                 className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm">
                 {STATUS_OPTIONS.map(s => (
@@ -190,10 +234,8 @@ export default function QuoteDetails() {
                   <h3 className="text-sm text-zinc-300 mb-2">Job</h3>
                   <div className="flex items-center gap-3">
                     <p className="flex-1 p-3 rounded-xl bg-zinc-950 text-zinc-200 text-sm">{job.title || "Untitled Job"}</p>
-                    <button
-                      onClick={() => navigate(`/crm/jobs/${job.job_id}`)}
-                      className="px-3 py-2 text-xs rounded-lg bg-sky-500 text-black font-semibold hover:bg-sky-400 transition whitespace-nowrap"
-                    >
+                    <button onClick={() => navigate(`/crm/jobs/${job.job_id}`)}
+                      className="px-3 py-2 text-xs rounded-lg bg-sky-500 text-black font-semibold hover:bg-sky-400 transition whitespace-nowrap">
                       View Job
                     </button>
                   </div>
@@ -203,13 +245,17 @@ export default function QuoteDetails() {
                     <h3 className="text-sm text-zinc-300 mb-2">Client</h3>
                     <div className="flex items-center gap-3">
                       <p className="flex-1 p-3 rounded-xl bg-zinc-950 text-zinc-200 text-sm">{clientName}</p>
-                      <button
-                        onClick={() => navigate(`/crm/clients/${job.customer.customer_id}`)}
-                        className="px-3 py-2 text-xs rounded-lg bg-sky-500 text-black font-semibold hover:bg-sky-400 transition whitespace-nowrap"
-                      >
+                      <button onClick={() => navigate(`/crm/clients/${job.customer.customer_id}`)}
+                        className="px-3 py-2 text-xs rounded-lg bg-sky-500 text-black font-semibold hover:bg-sky-400 transition whitespace-nowrap">
                         View Client
                       </button>
                     </div>
+                  </div>
+                )}
+                {job.customer?.email && (
+                  <div>
+                    <h3 className="text-sm text-zinc-300 mb-2">Client Email</h3>
+                    <p className="p-3 rounded-xl bg-zinc-950 text-zinc-200 text-sm">{job.customer.email}</p>
                   </div>
                 )}
                 {(job.town_city || job.postcode) && (
@@ -235,7 +281,7 @@ export default function QuoteDetails() {
         {open.legal && (
           <div className="border-t border-zinc-800 p-5">
             <p className="text-sm text-zinc-400 mb-4">
-              Permanently remove this quote and all its linked services. This cannot be undone.
+              Permanently remove this quote and all its linked services and timeline. This cannot be undone.
             </p>
             <button onClick={() => setDeleteOpen(true)}
               className="px-4 py-2 bg-red-600 text-white font-semibold rounded-xl hover:bg-red-500 transition text-sm">
@@ -255,7 +301,7 @@ export default function QuoteDetails() {
             <div className="px-6 py-4 space-y-3">
               <p className="text-zinc-300 text-sm">
                 This will permanently delete <span className="text-white font-semibold">{quote.title || "this quote"}</span> along
-                with all its linked <span className="text-white font-semibold">services</span>. This cannot be undone.
+                with all its linked <span className="text-white font-semibold">services and timeline history</span>. This cannot be undone.
               </p>
               {deleteError && <p className="text-red-400 text-sm">{deleteError}</p>}
             </div>

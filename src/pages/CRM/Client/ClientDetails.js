@@ -45,7 +45,7 @@ export default function CustomerDetails() {
     setLoading(true);
     const { data, error } = await supabase
       .from("customer").select("*").eq("customer_id", customerId).single();
-    if (error || !data) { setError("Customer not found."); setLoading(false); return; }
+    if (error || !data) { navigate("/app", { replace: true }); return; }
     setCustomer(data);
     const f = {
       first_name:    data.first_name    || "",
@@ -64,7 +64,7 @@ export default function CustomerDetails() {
     setOriginal(f);
     setAddrView(hasAddress(f) ? "display" : "lookup");
     setLoading(false);
-  }, [customerId]);
+  }, [customerId, navigate]);
 
   useEffect(() => { load(); }, [load]);
 

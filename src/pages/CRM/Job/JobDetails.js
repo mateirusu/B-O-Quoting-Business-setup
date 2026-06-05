@@ -41,7 +41,7 @@ export default function JobDetails() {
       .select("*, customer:customer_id(customer_id, first_name, last_name)")
       .eq("job_id", jobId)
       .single();
-    if (error || !data) { setError("Job not found."); setLoading(false); return; }
+    if (error || !data) { navigate("/app", { replace: true }); return; }
     setJob(data);
     const f = {
       title:         data.title         || "",
@@ -57,7 +57,7 @@ export default function JobDetails() {
     setOriginal(f);
     setAddrView(hasAddress(f) ? "display" : "lookup");
     setLoading(false);
-  }, [jobId]);
+  }, [jobId, navigate]);
 
   useEffect(() => { load(); }, [load]);
 

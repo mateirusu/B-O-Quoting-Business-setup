@@ -11,81 +11,58 @@ import CustomerView from "../pages/CRM/Client/ClientView";
 import JobView from "../pages/CRM/Job/JobView";
 import QuoteView from "../pages/CRM/Quote/QuoteView";
 import Schedule from "../pages/Schedule/Schedule";
+import QuoteServicesPublicView from "../pages/CustomerView/Public/QuoteServicesPublicView";
 
 export default function AppRoutes() {
   return (
     <Routes>
-      <Route path="/login" element={<Login />} />
-      <Route path="/register" element={<Register />} />
+      <Route path="/login"        element={<Login />} />
+      <Route path="/register"     element={<Register />} />
       <Route path="/set-password" element={<SetPassword />} />
+
+      {/* Public quote view — no auth required */}
+      <Route path="/public/quote/:publicToken" element={<QuoteServicesPublicView />} />
+
       <Route
         path="/app"
         element={
-          <ProtectedRoute>
-            <BusinessGate>
-              <Dashboard />
-            </BusinessGate>
-          </ProtectedRoute>
+          <ProtectedRoute><BusinessGate><Dashboard /></BusinessGate></ProtectedRoute>
         }
       />
       <Route
         path="/crm"
         element={
-          <ProtectedRoute>
-            <BusinessGate>
-              <CRM />
-            </BusinessGate>
-          </ProtectedRoute>
+          <ProtectedRoute><BusinessGate><CRM /></BusinessGate></ProtectedRoute>
         }
       />
       <Route
         path="/crm/clients/:customerId"
         element={
-          <ProtectedRoute>
-            <BusinessGate>
-              <CustomerView />
-            </BusinessGate>
-          </ProtectedRoute>
+          <ProtectedRoute><BusinessGate><CustomerView /></BusinessGate></ProtectedRoute>
         }
       />
       <Route
         path="/crm/jobs/:jobId"
         element={
-          <ProtectedRoute>
-            <BusinessGate>
-              <JobView />
-            </BusinessGate>
-          </ProtectedRoute>
+          <ProtectedRoute><BusinessGate><JobView /></BusinessGate></ProtectedRoute>
         }
       />
       <Route
         path="/crm/quotes/:quoteId"
         element={
-          <ProtectedRoute>
-            <BusinessGate>
-              <QuoteView />
-            </BusinessGate>
-          </ProtectedRoute>
+          <ProtectedRoute><BusinessGate><QuoteView /></BusinessGate></ProtectedRoute>
         }
       />
       <Route
         path="/schedule"
         element={
-          <ProtectedRoute>
-            <BusinessGate>
-              <Schedule />
-            </BusinessGate>
-          </ProtectedRoute>
+          <ProtectedRoute><BusinessGate><Schedule /></BusinessGate></ProtectedRoute>
         }
       />
       <Route
         path="/settings"
         element={
-          <ProtectedRoute>
-            <BusinessGate>
-              <Settings />
-            </BusinessGate>
-          </ProtectedRoute>
+          <ProtectedRoute><BusinessGate><Settings /></BusinessGate></ProtectedRoute>
         }
       />
       <Route path="*" element={<Navigate to="/login" />} />

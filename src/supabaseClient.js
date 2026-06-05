@@ -15,8 +15,12 @@ const fetchWithTimeout = async (url, options = {}) => {
   }
 };
 
-export const SUPABASE_URL = "https://miowdqqwqelawdunbfbu.supabase.co";
-export const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1pb3dkcXF3cWVsYXdkdW5iZmJ1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk2MzU5MTksImV4cCI6MjA5NTIxMTkxOX0.23yYZNEVmSOTLUW5m_2I3s5iLoq4R8KDjl4tY8Fh_IU";
+export const SUPABASE_URL      = process.env.REACT_APP_SUPABASE_URL;
+export const SUPABASE_ANON_KEY = process.env.REACT_APP_SUPABASE_ANON_KEY;
+
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  throw new Error("Missing REACT_APP_SUPABASE_URL or REACT_APP_SUPABASE_ANON_KEY in environment variables.");
+}
 
 export const supabase = createClient(
   SUPABASE_URL,

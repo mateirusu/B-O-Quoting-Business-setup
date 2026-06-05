@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../../context/AuthContext";
 import { supabase } from "../../../supabaseClient";
 import AddressLookup from "../../../components/AddressLookup";
+import AddJobModal from "../../../components/AddJobModal";
 
 const emptyForm = {
   first_name: "", last_name: "", email: "", phone: "",
@@ -23,10 +24,16 @@ export default function Clients() {
   const [search, setSearch]       = useState("");
   const [modal, setModal]         = useState(null); // null | "add" | "edit"
   const [form, setForm]           = useState(emptyForm);
-  const [addrView, setAddrView]   = useState("lookup"); // "lookup" | "display" | "form"
-  const [saving, setSaving]       = useState(false);
-  const [formError, setFormError] = useState(null);
-  const [deleteId, setDeleteId]   = useState(null);
+  const [addrView, setAddrView]   = useState("lookup");
+  const [saving, setSaving]         = useState(false);
+  const [formError, setFormError]   = useState(null);
+  const [fieldErrors, setFieldErrors] = useState({});
+  const [deleteId, setDeleteId]     = useState(null);
+
+  // Post-creation prompt
+  const [newCustomer,        setNewCustomer]        = useState(null); // { customer_id }
+  const [jobModal,           setJobModal]           = useState(false);
+  const [jobModalCustomerId, setJobModalCustomerId] = useState(null);
 
   const load = async () => {
     if (!profile?.business_id) return;
@@ -75,9 +82,32 @@ export default function Clients() {
     }
   };
 
-  const closeModal = () => { setModal(null); setForm(emptyForm); setFormError(null); };
+  const closeModal = () => { setModal(null); setForm(emptyForm); setFormError(null); setFieldErrors({}); };
 
-  const handleChange = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
+  const handleChange = (k, v) => {
+    setForm(prev => ({ ...prev, [k]: v }));
+    if (fieldErrors[k]) setFieldErrors(prev => { const n = { ...prev }; delete n[k]; return n; });
+  };
+
+  const validate = () => {
+    const errs = {};
+    if (!form.first_name.trim()) errs.first_name = "First name is required.";
+    if (!form.last_name.trim())  errs.last_name  = "Last name is required.";
+    if (!form.email.trim()) {
+      errs.email = "Email is required.";
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
+      errs.email = "Please enter a valid email address.";
+    }
+    if (!form.phone.trim()) {
+      errs.phone = "Phone number is required.";
+    } else if (!/^[\d\s+\-().]{7,}$/.test(form.phone.trim())) {
+      errs.phone = "Please enter a valid phone number.";
+    }
+    if (!form.address_line1.trim() || !form.town_city.trim() || !form.postcode.trim()) {
+      errs.address = "Please enter a full address (street, town/city and postcode are required).";
+    }
+    return errs;
+  };
 
   const handleAddressSelect = r => {
     setForm(prev => ({
@@ -89,30 +119,38 @@ export default function Clients() {
       postcode:      r.postcode || "",
       country:       r.country  || "",
     }));
+    setFieldErrors(prev => { const n = { ...prev }; delete n.address; return n; });
     setAddrView("display");
   };
 
   const save = async () => {
-    if (!form.first_name.trim() && !form.last_name.trim()) {
-      setFormError("Please enter at least a first or last name.");
-      return;
-    }
+    const errs = validate();
+    if (Object.keys(errs).length) { setFieldErrors(errs); return; }
+    setFieldErrors({});
     setSaving(true);
     setFormError(null);
     const payload = { ...form };
     delete payload._id;
     Object.keys(payload).forEach(k => { if (payload[k] === "") payload[k] = null; });
 
-    let error;
     if (modal === "add") {
-      ({ error } = await supabase.from("customer").insert({ ...payload, business_id: profile.business_id }));
+      const { data: inserted, error } = await supabase
+        .from("customer")
+        .insert({ ...payload, business_id: profile.business_id })
+        .select("customer_id")
+        .single();
+      setSaving(false);
+      if (error) { setFormError(error.message || "Failed to save."); return; }
+      closeModal();
+      load();
+      setNewCustomer(inserted);
     } else {
-      ({ error } = await supabase.from("customer").update(payload).eq("customer_id", form._id));
+      const { error } = await supabase.from("customer").update(payload).eq("customer_id", form._id);
+      setSaving(false);
+      if (error) { setFormError(error.message || "Failed to save."); return; }
+      closeModal();
+      load();
     }
-    setSaving(false);
-    if (error) { setFormError(error.message || "Failed to save."); return; }
-    closeModal();
-    load();
   };
 
   const confirmDelete = async () => {
@@ -120,6 +158,13 @@ export default function Clients() {
     await supabase.from("customer").delete().eq("customer_id", deleteId);
     setDeleteId(null);
     load();
+  };
+
+  const openJobModal = () => {
+    const id = newCustomer.customer_id;
+    setNewCustomer(null);
+    setJobModalCustomerId(id);
+    setJobModal(true);
   };
 
   if (loading) return <p className="text-zinc-400 text-sm">Loading customers…</p>;
@@ -200,39 +245,41 @@ export default function Clients() {
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
           <div className="bg-zinc-900 rounded-2xl w-full max-w-2xl" style={{ height: "90vh", display: "flex", flexDirection: "column" }}>
 
-            {/* Fixed header */}
             <h3 style={{ flexShrink: 0 }} className="text-xl font-bold px-6 pt-6 pb-4 text-white border-b border-zinc-800">
               {modal === "add" ? "Add Client" : "Edit Client"}
             </h3>
 
-            {/* Scrollable body */}
             <div style={{ flex: "1 1 0", overflowY: "auto", minHeight: 0 }} className="px-6 py-4 space-y-4">
 
-              {/* Name & contact */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="text-xs text-zinc-400 mb-1 block">First Name</label>
-                  <input value={form.first_name} onChange={e => handleChange("first_name", e.target.value)} className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm" placeholder="John" />
+                  <label className="text-xs text-zinc-400 mb-1 block">First Name <span className="text-red-400">*</span></label>
+                  <input value={form.first_name} onChange={e => handleChange("first_name", e.target.value)} className={`w-full p-3 rounded-xl bg-zinc-950 text-white text-sm ${fieldErrors.first_name ? "ring-1 ring-red-500" : ""}`} placeholder="First Name" />
+                  {fieldErrors.first_name && <p className="text-red-400 text-xs mt-1">{fieldErrors.first_name}</p>}
                 </div>
                 <div>
-                  <label className="text-xs text-zinc-400 mb-1 block">Last Name</label>
-                  <input value={form.last_name} onChange={e => handleChange("last_name", e.target.value)} className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm" placeholder="Smith" />
+                  <label className="text-xs text-zinc-400 mb-1 block">Last Name <span className="text-red-400">*</span></label>
+                  <input value={form.last_name} onChange={e => handleChange("last_name", e.target.value)} className={`w-full p-3 rounded-xl bg-zinc-950 text-white text-sm ${fieldErrors.last_name ? "ring-1 ring-red-500" : ""}`} placeholder="Last Name" />
+                  {fieldErrors.last_name && <p className="text-red-400 text-xs mt-1">{fieldErrors.last_name}</p>}
                 </div>
                 <div>
-                  <label className="text-xs text-zinc-400 mb-1 block">Email</label>
-                  <input type="email" value={form.email} onChange={e => handleChange("email", e.target.value)} className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm" placeholder="john@example.com" />
+                  <label className="text-xs text-zinc-400 mb-1 block">Email <span className="text-red-400">*</span></label>
+                  <input type="email" value={form.email} onChange={e => handleChange("email", e.target.value)} className={`w-full p-3 rounded-xl bg-zinc-950 text-white text-sm ${fieldErrors.email ? "ring-1 ring-red-500" : ""}`} placeholder="Email" />
+                  {fieldErrors.email && <p className="text-red-400 text-xs mt-1">{fieldErrors.email}</p>}
                 </div>
                 <div>
-                  <label className="text-xs text-zinc-400 mb-1 block">Phone</label>
-                  <input value={form.phone} onChange={e => handleChange("phone", e.target.value)} className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm" placeholder="+44 7700 000000" />
+                  <label className="text-xs text-zinc-400 mb-1 block">Phone <span className="text-red-400">*</span></label>
+                  <input value={form.phone} onChange={e => handleChange("phone", e.target.value)} className={`w-full p-3 rounded-xl bg-zinc-950 text-white text-sm ${fieldErrors.phone ? "ring-1 ring-red-500" : ""}`} placeholder="Phone" />
+                  {fieldErrors.phone && <p className="text-red-400 text-xs mt-1">{fieldErrors.phone}</p>}
                 </div>
               </div>
 
-              {/* Address — three-view pattern matching Business section */}
-              <div className="rounded-xl border border-zinc-700 p-4 space-y-3">
-                <p className="text-sm text-zinc-300 font-medium">Address</p>
+              <div className={`rounded-xl border p-4 space-y-3 ${fieldErrors.address ? "border-red-500" : "border-zinc-700"}`}>
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-zinc-300 font-medium">Address <span className="text-red-400">*</span></p>
+                  {fieldErrors.address && <p className="text-red-400 text-xs">{fieldErrors.address}</p>}
+                </div>
 
-                {/* DISPLAY view */}
                 {addrView === "display" && (
                   <>
                     <div className="bg-zinc-950 rounded-xl p-3 text-sm text-zinc-200 space-y-0.5">
@@ -250,7 +297,6 @@ export default function Clients() {
                   </>
                 )}
 
-                {/* LOOKUP view */}
                 {addrView === "lookup" && (
                   <>
                     <AddressLookup
@@ -268,7 +314,6 @@ export default function Clients() {
                   </>
                 )}
 
-                {/* FORM view */}
                 {addrView === "form" && (
                   <>
                     <div className="grid grid-cols-2 gap-3">
@@ -304,7 +349,6 @@ export default function Clients() {
                 )}
               </div>
 
-              {/* Notes */}
               <div>
                 <label className="text-xs text-zinc-400 mb-1 block">Notes</label>
                 <textarea value={form.notes} onChange={e => handleChange("notes", e.target.value)} rows={3} className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm resize-none" placeholder="Any additional notes…" />
@@ -313,13 +357,50 @@ export default function Clients() {
               {formError && <p className="text-red-400 text-sm">{formError}</p>}
             </div>
 
-            {/* Sticky footer */}
             <div style={{ flexShrink: 0 }} className="px-6 py-4 border-t border-zinc-800 flex justify-end gap-3">
               <button onClick={closeModal} className="px-5 py-2 rounded-xl border border-zinc-600 text-white hover:bg-zinc-800 transition text-sm">
                 Cancel
               </button>
               <button onClick={save} disabled={saving} className="px-5 py-2 rounded-xl bg-sky-500 text-black font-semibold hover:bg-sky-400 transition text-sm disabled:opacity-50">
                 {saving ? "Saving…" : modal === "add" ? "Add Client" : "Save Changes"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Post-creation prompt ── */}
+      {newCustomer && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-zinc-900 rounded-2xl p-8 space-y-6" style={{ width: "50%" }}>
+            <div>
+              <h3 className="text-3xl font-bold text-white mb-1">Client Added</h3>
+              <p className="text-zinc-400">What would you like to do next?</p>
+            </div>
+
+            <div className="space-y-3 flex flex-col items-center">
+              <button
+                onClick={openJobModal}
+                className="px-5 py-3 rounded-xl bg-sky-500 text-black font-semibold hover:bg-sky-400 transition"
+                style={{ width: "50%" }}
+              >
+                Create Job
+              </button>
+
+              <button
+                onClick={() => navigate(`/crm/clients/${newCustomer.customer_id}`)}
+                className="px-5 py-3 rounded-xl bg-zinc-800 text-white font-semibold hover:bg-zinc-700 transition"
+                style={{ width: "50%" }}
+              >
+                See Client Details
+              </button>
+
+              <button
+                onClick={() => setNewCustomer(null)}
+                className="px-5 py-3 rounded-xl border border-zinc-700 text-zinc-300 hover:bg-zinc-800 transition"
+                style={{ width: "50%" }}
+              >
+                Back to Clients Table
               </button>
             </div>
           </div>
@@ -339,6 +420,15 @@ export default function Clients() {
           </div>
         </div>
       )}
+
+      {/* ── Add Job modal (launched from post-creation prompt) ── */}
+      <AddJobModal
+        isOpen={jobModal}
+        onClose={() => { setJobModal(false); setJobModalCustomerId(null); }}
+        onSaved={load}
+        profile={profile}
+        fixedCustomerId={jobModalCustomerId}
+      />
     </div>
   );
 }
