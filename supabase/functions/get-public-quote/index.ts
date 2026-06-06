@@ -48,17 +48,36 @@ serve(async (req) => {
 
     const { quote_id, ...quote } = quoteRow; // quote_id stays internal
 
-    // Load services
+    // Load services (include service_id + hours for price breakdown)
     const { data: services } = await supabase
       .from("quote_service_link")
-      .select("quote_service_link_id, task, quantity, service:service_id(title)")
+      .select("quote_service_link_id, task, quantity, service_id, service:service_id(title, hours)")
       .eq("quote_id", quote_id)
       .order("created_at");
+
+    // Load materials linked to these services (internal only — not sent to client)
+    const serviceIds = (services || []).map((sv: any) => sv.service_id).filter(Boolean);
+    let materialsMap: Record<string, any[]> = {};
+    if (serviceIds.length > 0) {
+      const { data: matLinks } = await supabase
+        .from("material_service_link")
+        .select("service_id, quantity, material:material_id(name, base_price_no_vat, markup)")
+        .in("service_id", serviceIds);
+      (matLinks || []).forEach((link: any) => {
+        if (!materialsMap[link.service_id]) materialsMap[link.service_id] = [];
+        materialsMap[link.service_id].push({
+          name: link.material?.name,
+          base_price_no_vat: parseFloat(link.material?.base_price_no_vat) || 0,
+          markup: parseFloat(link.material?.markup) || 0,
+          qty: parseInt(link.quantity) || 1,
+        });
+      });
+    }
 
     // Load job + customer (limited fields for public view)
     const { data: link } = await supabase
       .from("job_quote_link")
-      .select("job:job_id(job_id, title, customer_id, customer:customer_id(first_name, last_name))")
+      .select("job:job_id(title, customer_id, customer:customer_id(first_name, last_name))")
       .eq("quote_id", quote_id)
       .maybeSingle();
 
@@ -66,8 +85,10 @@ serve(async (req) => {
     const customer   = job?.customer || null;
     const customerId = job?.customer_id || null;
 
-    // Load business via customer → business_id
+    // Load business + hourly_rate via customer → business_id (internal only)
     let business = null;
+    let vatRegistered = false;
+    let hourlyRate = 0;
     if (customerId) {
       const { data: cust } = await supabase
         .from("customer")
@@ -77,22 +98,70 @@ serve(async (req) => {
       if (cust?.business_id) {
         const { data: biz } = await supabase
           .from("business")
-          .select("business_name, phone, email, website, business_first_line, business_second_line, business_towncity, business_county, business_postcode, vat_number, company_reg_number")
+          .select("business_name, phone, email, website, business_first_line, business_second_line, business_towncity, business_county, business_postcode, vat_number, company_reg_number, vat_registered")
           .eq("business_id", cust.business_id)
           .single();
         business = biz || null;
+        vatRegistered = biz?.vat_registered || false;
+
+        const { data: pricing } = await supabase
+          .from("basic_pricing")
+          .select("hourly_rate")
+          .eq("business_id", cust.business_id)
+          .maybeSingle();
+        hourlyRate = parseFloat(pricing?.hourly_rate) || 0;
       }
     }
 
+    // Compute all prices server-side — no formula data sent to client
+    let totalLabour = 0;
+    let totalMaterialsIncVat = 0;
+
+    const enrichedServices = (services || []).map((sv: any) => {
+      const svQty     = parseInt(sv.quantity) || 1;
+      const hours     = parseFloat(sv.service?.hours) || 0;
+      const mats      = materialsMap[sv.service_id] || [];
+
+      const labSub    = hours * svQty * hourlyRate;
+      const labour    = vatRegistered ? labSub * 1.20 : labSub;
+
+      const matSub    = mats.reduce((s: number, m: any) =>
+        s + m.base_price_no_vat * (1 + m.markup / 100) * m.qty, 0) * svQty;
+      const materialsIncVat = matSub * 1.20;
+
+      const total     = labour + materialsIncVat;
+      const hasPricing = labour > 0 || materialsIncVat > 0;
+
+      totalLabour          += labour;
+      totalMaterialsIncVat += materialsIncVat;
+
+      // Return only display fields — no IDs, no pricing formulas
+      return {
+        title:              sv.service?.title || "—",
+        task:               sv.task || null,
+        quantity:           svQty,
+        material_names:     mats.map((m: any) => m.name).filter(Boolean),
+        labour:             hasPricing ? labour : null,
+        materials_inc_vat:  materialsIncVat > 0 ? materialsIncVat : null,
+        total:              hasPricing ? total : null,
+        has_pricing:        hasPricing,
+      };
+    });
+
     return json({
       quote,    // does NOT contain quote_id
-      services: services || [],
+      services: enrichedServices,
+      vat_registered: vatRegistered,
+      total_labour:           totalLabour > 0 ? totalLabour : null,
+      total_materials_inc_vat: totalMaterialsIncVat > 0 ? totalMaterialsIncVat : null,
+      grand_total:            (totalLabour + totalMaterialsIncVat) > 0 ? totalLabour + totalMaterialsIncVat : null,
       customer: customer ? { first_name: customer.first_name, last_name: customer.last_name } : null,
       job:      job ? { title: job.title } : null,
       business,
     });
 
-  } catch (_err) {
+  } catch (err) {
+    console.error("get-public-quote unhandled error:", err);
     return json({ error: "An unexpected error occurred" }, 500);
   }
 });

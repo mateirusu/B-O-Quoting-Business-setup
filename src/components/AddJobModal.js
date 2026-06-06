@@ -23,6 +23,8 @@ export default function AddJobModal({ isOpen, onClose, onSaved, profile, fixedCu
   const [addrView,         setAddrView]         = useState("lookup");
   const [saving,           setSaving]           = useState(false);
   const [formError,        setFormError]        = useState(null);
+  const [customerSearch,   setCustomerSearch]   = useState("");
+  const [customerDropOpen, setCustomerDropOpen] = useState(false);
 
   // Reset form whenever modal opens
   useEffect(() => {
@@ -31,6 +33,8 @@ export default function AddJobModal({ isOpen, onClose, onSaved, profile, fixedCu
     setSelectedServices([]);
     setAddrView("lookup");
     setFormError(null);
+    setCustomerSearch("");
+    setCustomerDropOpen(false);
   }, [isOpen]);
 
   // Load customer list (only when no fixed customer)
@@ -173,19 +177,49 @@ export default function AddJobModal({ isOpen, onClose, onSaved, profile, fixedCu
 
             {/* Customer — hidden when fixed */}
             {!fixedCustomerId && (
-              <div>
+              <div style={{ position: "relative" }}>
                 <label className="text-xs text-zinc-400 mb-1 block">Customer <span className="text-red-400">*</span></label>
-                <select
-                  value={form.customer_id}
-                  onChange={e => handleCustomerChange(e.target.value)}
+                <input
+                  value={customerSearch}
+                  onChange={e => {
+                    setCustomerSearch(e.target.value);
+                    setCustomerDropOpen(true);
+                    if (!e.target.value) handleCustomerChange("");
+                  }}
+                  onFocus={() => setCustomerDropOpen(true)}
+                  onBlur={() => setTimeout(() => setCustomerDropOpen(false), 150)}
+                  placeholder="Search customer…"
                   className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm"
-                  style={{ appearance: "none" }}
-                >
-                  <option value="">Select a customer…</option>
-                  {customers.map(c => (
-                    <option key={c.customer_id} value={c.customer_id}>{customerName(c)}</option>
-                  ))}
-                </select>
+                />
+                {customerDropOpen && (
+                  <div style={{
+                    position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0,
+                    zIndex: 200, background: "#09090b", border: "1px solid #3f3f46",
+                    borderRadius: "12px", maxHeight: "200px", overflowY: "auto",
+                  }}>
+                    {customers
+                      .filter(c => customerName(c).toLowerCase().includes(customerSearch.toLowerCase()))
+                      .map(c => (
+                        <div
+                          key={c.customer_id}
+                          onMouseDown={() => {
+                            handleCustomerChange(c.customer_id);
+                            setCustomerSearch(customerName(c));
+                            setCustomerDropOpen(false);
+                          }}
+                          className="px-4 py-3 text-sm text-white cursor-pointer hover:bg-zinc-800 transition"
+                          style={{ borderBottom: "1px solid #27272a" }}
+                        >
+                          {customerName(c)}
+                        </div>
+                      ))}
+                    {customers.filter(c =>
+                      customerName(c).toLowerCase().includes(customerSearch.toLowerCase())
+                    ).length === 0 && (
+                      <p className="px-4 py-3 text-sm text-zinc-500">No customers found.</p>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 

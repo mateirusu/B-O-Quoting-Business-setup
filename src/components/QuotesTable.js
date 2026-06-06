@@ -7,7 +7,7 @@ const customerName = c =>
 const statusColour = s => {
   switch (s?.toLowerCase()) {
     case "accepted": return "text-emerald-400";
-    case "rejected": return "text-red-400";
+    case "declined": return "text-red-400";
     case "sent":     return "text-sky-400";
     default:         return "text-zinc-400";
   }
@@ -23,7 +23,7 @@ const formatAddressParts = job => {
   ].filter(Boolean);
 };
 
-const STATUS_OPTIONS = ["All", "Draft", "Sent", "Accepted", "Rejected"];
+const STATUS_OPTIONS = ["All", "Draft", "Sent", "Accepted", "Declined"];
 
 export default function QuotesTable({
   quotes,

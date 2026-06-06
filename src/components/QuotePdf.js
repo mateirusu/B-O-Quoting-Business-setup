@@ -18,7 +18,8 @@ const s = StyleSheet.create({
   // Letter
   para:      { marginBottom: 8 },
   // Services
-  secTitle:  { fontFamily: "Helvetica-Bold", fontSize: 10, color: BLUE, marginBottom: 6 },
+  secTitle:     { fontFamily: "Helvetica-Bold", fontSize: 10, color: BLUE, marginBottom: 6 },
+  subSecTitle:  { fontFamily: "Helvetica-Bold", fontSize: 8, color: BLUE, marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.8 },
   thRow:     { flexDirection: "row", backgroundColor: LIGHT, paddingVertical: 5, paddingHorizontal: 6, marginBottom: 2 },
   th:        { fontFamily: "Helvetica-Bold", fontSize: 8, color: GRAY },
   tdRow:     { flexDirection: "row", borderBottom: "0.5pt solid #f3f4f6", paddingVertical: 5, paddingHorizontal: 4 },
@@ -30,7 +31,29 @@ const s = StyleSheet.create({
 const fmt = (d) =>
   new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
 
-export default function QuotePdf({ quote, services = [], customer, job, business }) {
+export default function QuotePdf({ quote, services = [], customer, job, business, hourlyRate = 0 }) {
+  const vatRegistered = business?.vat_registered || false;
+  const hrRate        = parseFloat(hourlyRate) || 0;
+  const fmtGbp        = (n) => `£${n.toFixed(2)}`;
+
+  const totalLabour = services.reduce((sum, sv) => {
+    const svQty = parseInt(sv.quantity) || 1;
+    const hours = parseFloat(sv.service?.hours) || 0;
+    const labSub = hours * svQty * hrRate;
+    return sum + (vatRegistered ? labSub * 1.20 : labSub);
+  }, 0);
+  const totalMat = services.reduce((sum, sv) => {
+    const svQty = parseInt(sv.quantity) || 1;
+    const matSub = (sv.materials || []).reduce((ms, m) => {
+      const base = parseFloat(m.base_price_no_vat) || 0;
+      const mu   = parseFloat(m.markup) || 0;
+      const mQty = parseInt(m.qty) || 1;
+      return ms + base * (1 + mu / 100) * mQty;
+    }, 0) * svQty;
+    return sum + matSub * 1.20;
+  }, 0);
+  const grandTotal = totalLabour + totalMat;
+
   const custName  = [customer?.first_name, customer?.last_name].filter(Boolean).join(" ") || "Valued Customer";
   const firstName = customer?.first_name || "there";
 
@@ -108,24 +131,101 @@ export default function QuotePdf({ quote, services = [], customer, job, business
 
         <View style={s.divider} />
 
-        {/* ── Scope of works ── */}
+        {/* ── Scope of Works ── */}
         <Text style={s.secTitle}>{quote?.title || "Scope of Works"}</Text>
-        {quote?.description ? <Text style={[s.para, { marginBottom: 8 }]}>{quote.description}</Text> : null}
+        {quote?.description ? <Text style={[s.para, { marginBottom: 10 }]}>{quote.description}</Text> : null}
 
-        {/* Table header */}
-        <View style={s.thRow}>
-          <Text style={[s.th, { flex: 2 }]}>Service</Text>
-          <Text style={[s.th, { flex: 3 }]}>Description / Task</Text>
-          <Text style={[s.th, { width: 36, textAlign: "right" }]}>Qty</Text>
-        </View>
+        <View style={{ borderBottom: "1.5pt solid #d1d5db", marginBottom: 10 }} />
 
-        {services.map((sv, i) => (
-          <View key={i} style={s.tdRow}>
-            <Text style={{ flex: 2, fontFamily: "Helvetica-Bold" }}>{sv.service?.title || "—"}</Text>
-            <Text style={{ flex: 3, color: GRAY }}>{sv.task || "—"}</Text>
-            <Text style={{ width: 36, textAlign: "right" }}>{sv.quantity ?? 1}</Text>
+        <Text style={{ fontFamily: "Helvetica-Bold", fontSize: 10, color: BLUE, marginBottom: 4 }}>Services</Text>
+
+        {services.map((sv, i) => {
+          const svQty     = parseInt(sv.quantity) || 1;
+          const matNames  = (sv.materials || []).map(m => m.name).filter(Boolean);
+          const hours     = parseFloat(sv.service?.hours) || 0;
+          const svcLabSub = hours * svQty * hrRate;
+          const svcLabour = vatRegistered ? svcLabSub * 1.20 : svcLabSub;
+          const svcMatSub = (sv.materials || []).reduce((ms, m) => {
+            const base = parseFloat(m.base_price_no_vat) || 0;
+            const mu   = parseFloat(m.markup) || 0;
+            const mQty = parseInt(m.qty) || 1;
+            return ms + base * (1 + mu / 100) * mQty;
+          }, 0) * svQty;
+          const svcMat    = svcMatSub * 1.20;
+          const svcTotal  = svcLabour + svcMat;
+          const hasPricing = svcLabour > 0 || svcMat > 0;
+
+          return (
+            <View key={i} style={[s.tdRow, { flexDirection: "column", paddingVertical: 8 }]}>
+              {/* Service header row */}
+              <View style={[s.row, { justifyContent: "space-between", marginBottom: 3 }]}>
+                <Text style={{ fontFamily: "Helvetica-Bold", flex: 1 }}>{sv.service?.title || "—"}</Text>
+                <Text style={{ color: GRAY, width: 36, textAlign: "right" }}>×{svQty}</Text>
+              </View>
+              {sv.task ? <Text style={{ color: GRAY, fontSize: 8.5, marginBottom: 4 }}>{sv.task}</Text> : null}
+
+              {/* Materials */}
+              {matNames.length > 0 && (
+                <View style={{ marginBottom: hasPricing ? 5 : 0 }}>
+                  <Text style={{ fontSize: 8.5, fontFamily: "Helvetica-Bold", color: DARK }}>Materials:</Text>
+                  {matNames.map((name, mi) => (
+                    <Text key={mi} style={{ fontSize: 8.5, color: DARK, marginLeft: 8, marginTop: 1 }}>{name}</Text>
+                  ))}
+                </View>
+              )}
+
+              {/* Pricing */}
+              {hasPricing && (
+                <View>
+                  <Text style={{ fontSize: 8.5, fontFamily: "Helvetica-Bold", color: DARK }}>Pricing:</Text>
+                  <View style={{ marginLeft: 8, marginTop: 2 }}>
+                    {svcLabour > 0 && (
+                      <View style={[s.row, { justifyContent: "space-between", marginBottom: 2 }]}>
+                        <Text style={{ fontSize: 8, color: DARK }}>Labour{vatRegistered ? " (inc. 20% VAT)" : ""}</Text>
+                        <Text style={{ fontSize: 8 }}>{fmtGbp(svcLabour)}</Text>
+                      </View>
+                    )}
+                    {svcMat > 0 && (
+                      <View style={[s.row, { justifyContent: "space-between", marginBottom: 2 }]}>
+                        <Text style={{ fontSize: 8, color: GRAY }}>Materials (inc. 20% VAT)</Text>
+                        <Text style={{ fontSize: 8 }}>{fmtGbp(svcMat)}</Text>
+                      </View>
+                    )}
+                    <View style={[s.row, { justifyContent: "space-between" }]}>
+                      <Text style={{ fontSize: 8.5, fontFamily: "Helvetica-Bold" }}>Total</Text>
+                      <Text style={{ fontSize: 8.5, fontFamily: "Helvetica-Bold" }}>{fmtGbp(svcTotal)}</Text>
+                    </View>
+                  </View>
+                </View>
+              )}
+            </View>
+          );
+        })}
+
+        {/* ── Price Breakdown ── */}
+        {(totalLabour > 0 || totalMat > 0) && (
+          <View style={{ borderTop: "1.5pt solid #e5e7eb", paddingTop: 10, paddingBottom: 10, marginTop: 4 }}>
+            <Text style={{ fontFamily: "Helvetica-Bold", fontSize: 10, color: BLUE, marginBottom: 8 }}>Total Price Breakdown</Text>
+            {totalLabour > 0 && (
+              <View style={[s.row, { justifyContent: "space-between", marginBottom: 4 }]}>
+                <Text style={{ fontSize: 9 }}>Labour{vatRegistered ? " (inc. 20% VAT)" : ""}</Text>
+                <Text style={{ fontSize: 9, fontFamily: "Helvetica-Bold" }}>{fmtGbp(totalLabour)}</Text>
+              </View>
+            )}
+            {totalMat > 0 && (
+              <View style={[s.row, { justifyContent: "space-between", marginBottom: 4 }]}>
+                <Text style={{ fontSize: 9 }}>Materials (inc. 20% VAT)</Text>
+                <Text style={{ fontSize: 9, fontFamily: "Helvetica-Bold" }}>{fmtGbp(totalMat)}</Text>
+              </View>
+            )}
+            <View style={{ borderTop: "0.5pt solid #e5e7eb", paddingTop: 6, marginTop: 2 }}>
+              <View style={[s.row, { justifyContent: "space-between" }]}>
+                <Text style={{ fontSize: 10, fontFamily: "Helvetica-Bold" }}>Total</Text>
+                <Text style={{ fontSize: 10, fontFamily: "Helvetica-Bold" }}>{fmtGbp(grandTotal)}</Text>
+              </View>
+            </View>
           </View>
-        ))}
+        )}
 
         <View style={s.divider} />
 

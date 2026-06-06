@@ -24,12 +24,34 @@ export async function sendQuote({ quoteId, profile, updateStatus = false }) {
     .single();
   if (qe) throw new Error("Failed to load quote: " + qe.message);
 
-  // ── 2. Load services ───────────────────────────────────────────────────────
-  const { data: services } = await supabase
+  // ── 2. Load services (with hours for price breakdown) ─────────────────────
+  const { data: servicesRaw } = await supabase
     .from("quote_service_link")
-    .select("quote_service_link_id, task, quantity, service:service_id(title)")
+    .select("quote_service_link_id, task, quantity, service_id, service:service_id(title, hours)")
     .eq("quote_id", quoteId)
     .order("created_at");
+
+  // Load materials linked to these services
+  const serviceIds = (servicesRaw || []).map(sv => sv.service_id).filter(Boolean);
+  let materialsMap = {};
+  if (serviceIds.length > 0) {
+    const { data: matLinks } = await supabase
+      .from("material_service_link")
+      .select("service_id, quantity, material:material_id(name, base_price_no_vat, markup)")
+      .in("service_id", serviceIds);
+    (matLinks || []).forEach(link => {
+      if (!materialsMap[link.service_id]) materialsMap[link.service_id] = [];
+      materialsMap[link.service_id].push({
+        name: link.material?.name,
+        base_price_no_vat: link.material?.base_price_no_vat,
+        markup: link.material?.markup,
+        qty: link.quantity,
+      });
+    });
+  }
+  const services = (servicesRaw || []).map(sv => ({
+    ...sv, materials: materialsMap[sv.service_id] || [],
+  }));
 
   // ── 3. Load job + customer ─────────────────────────────────────────────────
   const { data: link } = await supabase
@@ -45,24 +67,32 @@ export async function sendQuote({ quoteId, profile, updateStatus = false }) {
   const job      = link?.job      || null;
   const customer = job?.customer  || null;
 
-  // ── 4. Load business ───────────────────────────────────────────────────────
+  // ── 4. Load business + hourly rate ────────────────────────────────────────
   const { data: business } = await supabase
     .from("business")
     .select(
       "business_name, phone, email, website, " +
       "business_first_line, business_second_line, business_towncity, " +
-      "business_county, business_postcode, vat_number, company_reg_number"
+      "business_county, business_postcode, vat_number, company_reg_number, vat_registered"
     )
     .eq("business_id", profile.business_id)
     .single();
 
+  const { data: pricing } = await supabase
+    .from("basic_pricing")
+    .select("hourly_rate")
+    .eq("business_id", profile.business_id)
+    .maybeSingle();
+  const hourlyRate = pricing?.hourly_rate ?? 0;
+
   // ── 5. Generate PDF blob ───────────────────────────────────────────────────
   const element = createElement(QuotePdf, {
     quote,
-    services: services || [],
+    services,
     customer,
     job,
     business,
+    hourlyRate,
   });
   const blob = await pdf(element).toBlob();
 

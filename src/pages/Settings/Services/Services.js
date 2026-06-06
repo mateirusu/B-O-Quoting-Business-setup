@@ -1019,7 +1019,7 @@ export default function Services() {
                   {selectedMaterialIds.length > 0 && (
                     <>
                       <div className="flex justify-between text-zinc-400">
-                        <span>Materials (base):</span>
+                        <span>Materials (Base, No VAT):</span>
                         <span>£{calculateServiceTotal(tempService.hours).materialsBase}</span>
                       </div>
                       <div className="flex justify-between text-zinc-400">
@@ -1029,7 +1029,7 @@ export default function Services() {
                     </>
                   )}
                   <div className="flex justify-between text-sky-400 font-bold pt-1 border-t border-zinc-700">
-                    <span>Total:</span>
+                    <span>Total(No VAT):</span>
                     <span>£{calculateServiceTotal(tempService.hours).total}</span>
                   </div>
                 </div>

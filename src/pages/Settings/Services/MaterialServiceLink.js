@@ -645,7 +645,7 @@ export default function MaterialServiceLink({
                       Quantity
                     </th>
                     <th className="p-3 text-left text-xs font-bold text-zinc-400 uppercase">
-                      Total
+                      Price(£)
                     </th>
                     <th className="p-3 text-center text-xs font-bold text-zinc-400 uppercase">
                       Actions
@@ -795,20 +795,20 @@ export default function MaterialServiceLink({
               <div className="p-3 bg-zinc-800 rounded-xl mb-4 space-y-1 text-xs">
                 <div className="flex justify-between text-zinc-400">
                   <span>
-                    Materials ({linkedMaterials.filter(m => m.materialId || m.name.trim()).length}):
+                    Materials(No VAT) ({linkedMaterials.filter(m => m.materialId || m.name.trim()).length}):
                   </span>
                   <span>
                     £{calculateMaterialsTotal().base}
                   </span>
                 </div>
                 <div className="flex justify-between text-zinc-400">
-                  <span>Markup:</span>
+                  <span>Markup(No VAT):</span>
                   <span>
                     £{calculateMaterialsTotal().markup}
                   </span>
                 </div>
                 <div className="flex justify-between text-sky-400 font-bold pt-1 border-t border-zinc-700">
-                  <span>Total Materials:</span>
+                  <span>Total Materials(No VAT):</span>
                   <span>
                     £{calculateMaterialsTotal().total}
                   </span>

@@ -8,7 +8,7 @@ const SECTION_KEYS = {
   details: ["title", "description", "status"],
 };
 
-const STATUS_OPTIONS = ["Draft", "Sent", "Accepted", "Rejected"];
+const STATUS_OPTIONS = ["Draft", "Sent", "Accepted", "Declined"];
 
 export default function QuoteDetails() {
   const { quoteId } = useParams();

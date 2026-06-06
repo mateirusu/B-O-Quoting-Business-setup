@@ -7,7 +7,7 @@ const corsHeaders = {
 };
 
 const UUID_REGEX    = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const VALID_STATUSES = ["Accepted", "Rejected"] as const;
+const VALID_STATUSES = ["Accepted", "Declined"] as const;
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -31,7 +31,7 @@ serve(async (req) => {
       return json({ error: "Invalid token" }, 400);
     }
     if (!status || !VALID_STATUSES.includes(status)) {
-      return json({ error: "Status must be Accepted or Rejected" }, 400);
+      return json({ error: "Status must be Accepted or Declined" }, 400);
     }
     // Sanitise notes — strip any HTML and truncate to 5000 chars
     const safeNotes = typeof notes === "string"
@@ -55,7 +55,7 @@ serve(async (req) => {
     }
 
     // Prevent re-submitting an already-resolved quote
-    if (quoteRow.status === "Accepted" || quoteRow.status === "Rejected") {
+    if (quoteRow.status === "Accepted" || quoteRow.status === "Declined") {
       return json({ error: "This quote has already been responded to" }, 409);
     }
 
@@ -66,7 +66,9 @@ serve(async (req) => {
       .from("quote")
       .update({ status })
       .eq("quote_id", quote_id);
-    if (updateErr) throw new Error("Failed to update quote");
+    if (updateErr) {
+      throw new Error(`DB update failed — code: ${updateErr.code} | msg: ${updateErr.message} | hint: ${updateErr.hint}`);
+    }
 
     // Resolve business_id via job_quote_link → job → customer
     const { data: link } = await supabase
@@ -86,17 +88,21 @@ serve(async (req) => {
     }
 
     if (businessId) {
-      await supabase.from("quote_timeline").insert({
+      const { error: timelineErr } = await supabase.from("quote_timeline").insert({
         quote_id,
         business_id: businessId,
         status,
         notes: safeNotes || (status === "Accepted" ? "Customer accepted the quote." : "Customer declined the quote."),
       });
+      if (timelineErr) {
+        console.error("quote_timeline insert failed:", timelineErr.message, timelineErr.details);
+      }
     }
 
     return json({ success: true });
 
-  } catch (_err) {
+  } catch (err) {
+    console.error("update-public-quote unhandled error:", err);
     return json({ error: "An unexpected error occurred" }, 500);
   }
 });

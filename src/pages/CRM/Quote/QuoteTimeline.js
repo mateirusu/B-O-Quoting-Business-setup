@@ -7,7 +7,7 @@ const STATUS_COLOURS = {
   Draft:    { bg: "rgba(113,113,122,0.15)", text: "#a1a1aa" },
   Sent:     { bg: "rgba(14,165,233,0.15)",  text: "#38bdf8" },
   Accepted: { bg: "rgba(52,211,153,0.15)",  text: "#34d399" },
-  Rejected: { bg: "rgba(248,113,113,0.15)", text: "#f87171" },
+  Declined: { bg: "rgba(248,113,113,0.15)", text: "#f87171" },
 };
 
 function StatusBadge({ status }) {
