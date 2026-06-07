@@ -1,127 +1,126 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "../../../context/AuthContext";
 import { supabase } from "../../../supabaseClient";
-import MaterialServiceLink from "./MaterialServiceLink";
-import { fetchPexelsImage } from "../../../utils/pexelsImage";
+import ServiceForm from "./ServiceForm";
 
 export default function Services() {
   const { profile, loading: authLoading } = useAuth();
 
-  const [search, setSearch] = useState("");
+  // Filters
+  const [search,            setSearch]            = useState("");
   const [serviceTypeFilter, setServiceTypeFilter] = useState("Reusable");
-  const [dateFrom,    setDateFrom]    = useState("");
-  const [dateTo,      setDateTo]      = useState("");
-  const [filtersOpen, setFiltersOpen] = useState(false);
-  const [services, setServices] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState(null);
-  const [hourlyRate, setHourlyRate] = useState(null);
+  const [dateFrom,          setDateFrom]          = useState("");
+  const [dateTo,            setDateTo]            = useState("");
+  const [filterCustomer,    setFilterCustomer]    = useState("");
+  const [filterJob,         setFilterJob]         = useState("");
+  const [filterAddress,     setFilterAddress]     = useState("");
+  const [filterQuote,       setFilterQuote]       = useState("");
+  const [filtersOpen,       setFiltersOpen]       = useState(false);
 
-  // Materials state
-  const [selectedMaterialIds, setSelectedMaterialIds] = useState([]);
-  const [isMaterialsModalOpen, setIsMaterialsModalOpen] = useState(false);
-  const [serviceMaterialsTotal, setServiceMaterialsTotal] = useState({ base: "0.00", markup: "0.00", total: "0.00" });
+  // Data
+  const [services,               setServices]               = useState([]);
+  const [serviceContexts,        setServiceContexts]        = useState({});
+  const [loading,                setLoading]                = useState(true);
+  const [error,                  setError]                  = useState(null);
+  const [hourlyRate,             setHourlyRate]             = useState(null);
   const [serviceMaterialsTotals, setServiceMaterialsTotals] = useState({});
+  const [descriptionPopup,       setDescriptionPopup]       = useState(null);
+  const [expandedSections,       setExpandedSections]       = useState(new Set());
 
-  const emptyService = {
-    title: "",
-    description: "",
-    hours: "1",
-    service_type: "Reusable",
-    image_url:
-      "https://images.unsplash.com/photo-1621905252507-b35492cc74b4?q=80&w=1200&auto=format&fit=crop",
-  };
+  // Form
+  const [formServiceId, setFormServiceId] = useState(undefined);
+  const isFormOpen = formServiceId !== undefined;
 
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isEditMode, setIsEditMode] = useState(false);
-  const [editingServiceId, setEditingServiceId] = useState(null);
-  const [serviceAutoCreated, setServiceAutoCreated] = useState(false);
-  const [tempService, setTempService] = useState(null);
-  const [imageFile, setImageFile] = useState(null);
-  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-  const [fetchingImage, setFetchingImage] = useState(false);
-  const pexelsPageRef   = useRef(1);
   const filterBtnRef    = useRef(null);
   const filterBubbleRef = useRef(null);
-  const [serviceToDelete, setServiceToDelete] = useState(null);
-  const [descriptionPopup, setDescriptionPopup] = useState(null);
 
-  // Fetch hourly rate from basic_pricing table
   const fetchHourlyRate = useCallback(async () => {
     if (!profile?.business_id) return;
-
-    try {
-      const { data, error } = await supabase
-        .from("basic_pricing")
-        .select("hourly_rate")
-        .eq("business_id", profile.business_id)
-        .maybeSingle();
-
-      if (error) throw error;
-
-      console.log("Fetched hourly rate:", data);
-      setHourlyRate(data?.hourly_rate ?? null);
-    } catch (err) {
-      console.error("Error fetching hourly rate:", err);
-      setHourlyRate(null);
-    }
+    const { data } = await supabase.from("basic_pricing").select("hourly_rate").eq("business_id", profile.business_id).maybeSingle();
+    setHourlyRate(data?.hourly_rate ?? null);
   }, [profile?.business_id]);
 
-  // Fetch materials totals for all services (for tile display)
   const fetchAllServicesMaterialsTotals = useCallback(async () => {
     if (!profile?.business_id) return;
-    try {
-      const { data, error } = await supabase
-        .from("material_service_link")
-        .select(`
-          service_id,
-          quantity,
-          material:material_id (
-            base_price_no_vat,
-            markup
-          )
-        `)
-        .eq("business_id", profile.business_id);
-
-      if (error) throw error;
-
-      const totals = {};
-      (data || []).forEach(link => {
-        const price = parseFloat(link.material?.base_price_no_vat) || 0;
-        const markup = parseFloat(link.material?.markup) || 0;
-        const qty = parseInt(link.quantity) || 1;
-        totals[link.service_id] = (totals[link.service_id] || 0) + price * (1 + markup / 100) * qty;
-      });
-      setServiceMaterialsTotals(totals);
-    } catch (err) {
-      console.error("Error fetching all services materials totals:", err);
-    }
+    const { data } = await supabase
+      .from("material_service_link")
+      .select("service_id, quantity, material:material_id(base_price_no_vat, markup)")
+      .eq("business_id", profile.business_id);
+    const totals = {};
+    (data || []).forEach(link => {
+      const price  = parseFloat(link.material?.base_price_no_vat) || 0;
+      const markup = parseFloat(link.material?.markup) || 0;
+      const qty    = parseInt(link.quantity) || 1;
+      totals[link.service_id] = (totals[link.service_id] || 0) + price * (1 + markup / 100) * qty;
+    });
+    setServiceMaterialsTotals(totals);
   }, [profile?.business_id]);
 
-  // Fetch services for the user's business
   const fetchServices = useCallback(async () => {
-    if (!profile?.business_id) {
-      setLoading(false);
-      return;
-    }
-
+    if (!profile?.business_id) { setLoading(false); return; }
     try {
-      setLoading(true);
-      setError(null);
-
+      setLoading(true); setError(null);
       const { data, error } = await supabase
         .from("service")
         .select("*")
         .eq("business_id", profile.business_id)
         .eq("main_service", true)
         .order("created_at", { ascending: false });
-
       if (error) throw error;
-
       setServices(data || []);
+
+      // Fetch quote/job/customer context for Custom and Customer Request services
+      const nonReusableIds = (data || [])
+        .filter(s => s.service_type !== "Reusable")
+        .map(s => s.service_id);
+
+      if (nonReusableIds.length) {
+        const { data: linkData } = await supabase
+          .from("quote_service_link")
+          .select(`
+            service_id,
+            quote:quote_id(
+              quote_id, title, quote_number, status,
+              job_quote_link(
+                job:job_id(
+                  job_id, title,
+                  address_line1, address_line2, town_city, county, postcode,
+                  customer:customer_id(customer_id, first_name, last_name)
+                )
+              )
+            )
+          `)
+          .in("service_id", nonReusableIds);
+
+        const ctxMap = {};
+        (linkData || []).forEach(link => {
+          if (ctxMap[link.service_id]) return; // take first link only
+          const q = link.quote;
+          if (!q) return;
+          const jql = Array.isArray(q.job_quote_link) ? q.job_quote_link[0] : q.job_quote_link;
+          const job = jql?.job;
+          ctxMap[link.service_id] = {
+            quoteId:           q.quote_id,
+            quoteTitle:        q.title        || "",
+            quoteNumber:       q.quote_number || "",
+            quoteStatus:       q.status       || "",
+            jobId:             job?.job_id              || null,
+            jobTitle:          job?.title               || "",
+            addressLine1:      job?.address_line1        || "",
+            addressLine2:      job?.address_line2        || "",
+            townCity:          job?.town_city            || "",
+            county:            job?.county               || "",
+            postcode:          job?.postcode             || "",
+            customerId:        job?.customer?.customer_id || null,
+            customerFirstName: job?.customer?.first_name || "",
+            customerLastName:  job?.customer?.last_name  || "",
+          };
+        });
+        setServiceContexts(ctxMap);
+      } else {
+        setServiceContexts({});
+      }
     } catch (err) {
-      console.error("Error fetching services:", err);
       setError("Failed to load services");
     } finally {
       setLoading(false);
@@ -150,12 +149,12 @@ export default function Services() {
     return () => document.removeEventListener("mousedown", handler);
   }, [filtersOpen]);
 
-  const sanitizeNumberInput = (value) => {
-    if (!value) return "";
-    let cleaned = value.replace(/[^0-9.]/g, "");
-    const parts = cleaned.split(".");
-    if (parts.length > 2) cleaned = parts[0] + "." + parts.slice(1).join("");
-    return cleaned;
+  const toggleSection = (key) => {
+    setExpandedSections(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
   };
 
   const calculatePrice = (hours) => {
@@ -164,386 +163,188 @@ export default function Services() {
     return (h * hourlyRate).toFixed(2);
   };
 
-  const openEditModal = (service) => {
-    setIsEditMode(true);
-    setEditingServiceId(service.service_id);
-    setTempService({
-      title: service.title,
-      description: service.description || "",
-      hours: service.hours.toString(),
-      service_type: service.service_type || "Reusable",
-      image_url: service.image_url || emptyService.image_url,
-    });
-    setImageFile(null);
-    setSelectedMaterialIds([]);
-    setServiceMaterialsTotal({ base: "0.00", markup: "0.00", total: "0.00" });
-    pexelsPageRef.current = 1;
-    setIsModalOpen(true);
-    fetchServiceMaterialsTotal(service.service_id);
-  };
-
-  const openAddModal = () => {
-    setIsEditMode(false);
-    setEditingServiceId(null);
-    setTempService({ ...emptyService });
-    setImageFile(null);
-    setSelectedMaterialIds([]);
-    setServiceMaterialsTotal({ base: "0.00", markup: "0.00", total: "0.00" });
-    pexelsPageRef.current = 1;
-    setIsModalOpen(true);
-  };
-
-  const closeModal = () => {
-    setIsModalOpen(false);
-    setIsEditMode(false);
-    setEditingServiceId(null);
-    setServiceAutoCreated(false);
-    setTempService(null);
-    setImageFile(null);
-    setSelectedMaterialIds([]);
-  };
-
-  // Called only by the Cancel button — cleans up an auto-created service before closing.
-  const handleCancelModal = async () => {
-    if (serviceAutoCreated && editingServiceId) {
-      await supabase
-        .from("material_service_link")
-        .delete()
-        .eq("service_id", editingServiceId)
-        .eq("business_id", profile.business_id);
-      await supabase
-        .from("service")
-        .delete()
-        .eq("service_id", editingServiceId)
-        .eq("business_id", profile.business_id);
-      await fetchServices();
-    }
-    closeModal();
-  };
-
-  // Materials modal handlers
-  const openMaterialsModal = async () => {
-    // If this is a new (unsaved) service, save it first to get a service_id
-    // so that MaterialServiceLink can create material_service_link records.
-    if (!editingServiceId) {
-      if (!tempService?.title?.trim()) {
-        setError("Please enter a service title before assigning materials.");
-        return;
-      }
-      try {
-        setSaving(true);
-        setError(null);
-
-        let imageUrl = tempService.image_url;
-        if (imageFile) {
-          const { data: { user } } = await supabase.auth.getUser();
-          if (user) imageUrl = await uploadImage(imageFile, user.id);
-        }
-
-        const { data: insertData, error } = await supabase
-          .from("service")
-          .insert([{
-            title: tempService.title,
-            description: tempService.description,
-            hours: parseFloat(tempService.hours) || 0,
-            image_url: imageUrl,
-            business_id: profile.business_id,
-            main_service: true,
-            service_type: "Reusable",
-          }])
-          .select()
-          .maybeSingle();
-
-        if (error) throw error;
-
-        setEditingServiceId(insertData.service_id);
-        setIsEditMode(true);
-        setServiceAutoCreated(true);
-        await fetchServices();
-      } catch (err) {
-        setError(err.message || "Failed to save service");
-        setSaving(false);
-        return;
-      } finally {
-        setSaving(false);
-      }
-    }
-
-    setIsModalOpen(false);
-    setIsMaterialsModalOpen(true);
-  };
-
-  const closeMaterialsModal = () => {
-    setIsMaterialsModalOpen(false);
-    setIsModalOpen(true); // Re-open the service modal
-  };
-
-  const handleMaterialsSaved = (materialsTotal) => {
-    if (materialsTotal) {
-      setServiceMaterialsTotal(materialsTotal);
-    }
-    setIsMaterialsModalOpen(false);
-    setIsModalOpen(true);
-    fetchServiceMaterialsCount();
+  const handleFormSaved = () => {
+    fetchServices();
     fetchAllServicesMaterialsTotals();
   };
 
-  // Fetch count and totals of materials linked to a service (for display)
-  const fetchServiceMaterialsTotal = async (svcId) => {
-    if (!svcId) return;
-    try {
-      const { data, error } = await supabase
-        .from("material_service_link")
-        .select(`
-          quantity,
-          material_id,
-          material:material_id (
-            base_price_no_vat,
-            markup
-          )
-        `)
-        .eq("service_id", svcId);
+  // ── Constants (must be above filteredServices) ────────────────────────────
 
-      if (error) throw error;
+  const padQuoteNum = (n) => String(n || "").padStart(4, "0");
 
-      const links = data || [];
-      setSelectedMaterialIds(links.map(d => d.material_id));
-
-      const baseTotal = links.reduce((sum, link) => {
-        const price = parseFloat(link.material?.base_price_no_vat) || 0;
-        const qty = parseInt(link.quantity) || 1;
-        return sum + price * qty;
-      }, 0);
-
-      const markupTotal = links.reduce((sum, link) => {
-        const price = parseFloat(link.material?.base_price_no_vat) || 0;
-        const markup = parseFloat(link.material?.markup) || 0;
-        const qty = parseInt(link.quantity) || 1;
-        return sum + price * (markup / 100) * qty;
-      }, 0);
-
-      setServiceMaterialsTotal({
-        base: baseTotal.toFixed(2),
-        markup: markupTotal.toFixed(2),
-        total: (baseTotal + markupTotal).toFixed(2),
-      });
-    } catch (err) {
-      console.error("Error fetching service materials total:", err);
-    }
+  const TYPE_ACCENT = {
+    Reusable:           "#34d399",
+    Custom:             "#38bdf8",
+    "Customer Request": "#fbbf24",
   };
 
-  const fetchServiceMaterialsCount = async () => {
-    fetchServiceMaterialsTotal(editingServiceId);
+  const QUOTE_STATUS_COLOURS = {
+    Draft:    { bg: "rgba(113,113,122,0.15)", text: "#a1a1aa" },
+    Sent:     { bg: "rgba(14,165,233,0.15)",  text: "#38bdf8" },
+    Accepted: { bg: "rgba(52,211,153,0.15)",  text: "#34d399" },
+    Declined: { bg: "rgba(248,113,113,0.15)", text: "#f87171" },
   };
 
-  // Calculate service total price
-  const calculateServiceTotal = (hours) => {
-    const labour = parseFloat(calculatePrice(hours)) || 0;
-    const materialsBase = parseFloat(serviceMaterialsTotal.base) || 0;
-    const materialsMarkup = parseFloat(serviceMaterialsTotal.markup) || 0;
-    const total = (labour + materialsBase + materialsMarkup).toFixed(2);
-    return {
-      labour: labour.toFixed(2),
-      materialsBase: materialsBase.toFixed(2),
-      materialsMarkup: materialsMarkup.toFixed(2),
-      total: total,
-    };
-  };
+  // ── Filtering ─────────────────────────────────────────────────────────────
 
-  // Get selected materials display text
-  const getSelectedMaterialsText = () => {
-    const count = selectedMaterialIds.length;
-    if (count === 0) return "No materials";
-    return `${count} material${count > 1 ? 's' : ''} linked`;
-  };
+  const showContextFilters = serviceTypeFilter !== "Reusable";
 
-  const uploadImage = async (file, userId) => {
-    if (!file) return null;
+  const hasNonDefaultFilters = serviceTypeFilter !== "Reusable" || !!dateFrom || !!dateTo
+    || !!filterCustomer || !!filterJob || !!filterAddress || !!filterQuote;
 
-    const fileExt = file.name.split(".").pop();
-    const fileName = `${userId}_${Date.now()}.${fileExt}`;
-    const filePath = `service-images/${fileName}`;
-
-    const { data, error } = await supabase.storage
-      .from("service-images")
-      .upload(filePath, file, { upsert: true });
-
-    if (error) {
-      console.error("Image upload error:", error);
-      throw error;
-    }
-
-    const { data: urlData } = supabase.storage
-      .from("service-images")
-      .getPublicUrl(filePath);
-
-    return urlData?.publicUrl;
-  };
-
-  const saveChanges = async () => {
-    if (!tempService || !profile?.business_id) return;
-    if (saving) return;
-
-    try {
-      setSaving(true);
-      setError(null);
-
-      let imageUrl = tempService.image_url;
-
-      // Upload image if a new file was selected
-      if (imageFile) {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          imageUrl = await uploadImage(imageFile, user.id);
-        }
-      }
-
-      const serviceData = {
-        title: tempService.title,
-        description: tempService.description,
-        hours: parseFloat(tempService.hours) || 0,
-        image_url: imageUrl,
-        business_id: profile.business_id,
-        main_service: true,
-        service_type: tempService.service_type || "Reusable",
-      };
-
-      let err;
-      let newServiceId = editingServiceId;
-      if (isEditMode && editingServiceId) {
-        const { error } = await supabase
-          .from("service")
-          .update(serviceData)
-          .eq("service_id", editingServiceId)
-          .eq("business_id", profile.business_id);
-
-        err = error;
-      } else {
-        const { data: insertData, error } = await supabase
-          .from("service")
-          .insert([serviceData])
-          .select()
-          .maybeSingle();
-
-        err = error;
-        if (insertData) {
-          newServiceId = insertData.service_id;
-        }
-      }
-
-      if (err) throw err;
-
-      await fetchServices();
-      closeModal();
-    } catch (err) {
-      console.error("Save error:", err);
-      setError(err.message || "Failed to save service");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const openDeleteConfirm = (serviceId) => {
-    setServiceToDelete(serviceId);
-    setIsModalOpen(false);
-    setDeleteConfirmOpen(true);
-  };
-
-  const closeDeleteConfirm = () => {
-    setDeleteConfirmOpen(false);
-    setIsModalOpen(true);
-    setServiceToDelete(null);
-  };
-
-  const closeDeleteAfterSuccess = () => {
-    setDeleteConfirmOpen(false);
-    setIsModalOpen(false);
-    setServiceToDelete(null);
-    setEditingServiceId(null);
-    setTempService(null);
-  };
-
-  const confirmDelete = async () => {
-    if (!serviceToDelete) return;
-
-    try {
-      setError(null);
-
-      // Remove all material links for this service first
-      const { error: linkError } = await supabase
-        .from("material_service_link")
-        .delete()
-        .eq("service_id", serviceToDelete)
-        .eq("business_id", profile.business_id);
-
-      if (linkError) throw linkError;
-
-      const { error } = await supabase
-        .from("service")
-        .delete()
-        .eq("service_id", serviceToDelete)
-        .eq("business_id", profile.business_id);
-
-      if (error) throw error;
-
-      await fetchServices();
-      closeDeleteAfterSuccess();
-    } catch (err) {
-      console.error("Delete error:", err);
-      setError("Failed to delete service");
-    }
-  };
-
-  const handleChange = (field, value) => {
-    setTempService({ ...tempService, [field]: value });
-  };
-
-  const handleImageUpload = (file) => {
-    if (!file) return;
-    setImageFile(file);
-
-    // Create preview
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      setTempService((p) => ({ ...p, image_url: reader.result }));
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const handleGenerateServiceImage = async () => {
-    const query = tempService?.title?.trim();
-    if (!query) return;
-    setFetchingImage(true);
-    try {
-      const url = await fetchPexelsImage(query, pexelsPageRef.current);
-      if (url) {
-        setTempService(prev => ({ ...prev, image_url: url }));
-        pexelsPageRef.current += 1;
-      }
-    } catch {
-      // Non-critical — silently ignore
-    } finally {
-      setFetchingImage(false);
-    }
-  };
-
-  const hasNonDefaultFilters = serviceTypeFilter !== "Reusable" || !!dateFrom || !!dateTo;
-
-  const filteredServices = services.filter((s) => {
-    if (!s.title.toLowerCase().includes(search.toLowerCase())) return false;
+  const filteredServices = services.filter(s => {
     if (serviceTypeFilter !== "All" && s.service_type !== serviceTypeFilter) return false;
+
     if (dateFrom) {
-      const from = new Date(dateFrom);
-      from.setHours(0, 0, 0, 0);
+      const from = new Date(dateFrom); from.setHours(0, 0, 0, 0);
       if (new Date(s.created_at) < from) return false;
     }
     if (dateTo) {
-      const to = new Date(dateTo);
-      to.setHours(23, 59, 59, 999);
+      const to = new Date(dateTo); to.setHours(23, 59, 59, 999);
       if (new Date(s.created_at) > to) return false;
     }
+
+    // Context filters only apply to non-Reusable services; ignored for Reusable
+    if (s.service_type !== "Reusable") {
+      const ctx = serviceContexts[s.service_id];
+      if (filterCustomer) {
+        const name = `${ctx?.customerFirstName || ""} ${ctx?.customerLastName || ""}`;
+        if (!name.toLowerCase().includes(filterCustomer.toLowerCase())) return false;
+      }
+      if (filterJob && !(ctx?.jobTitle || "").toLowerCase().includes(filterJob.toLowerCase())) return false;
+      if (filterAddress) {
+        const addr = [ctx?.addressLine1, ctx?.addressLine2, ctx?.townCity, ctx?.county, ctx?.postcode]
+          .filter(Boolean).join(" ").toLowerCase();
+        if (!addr.includes(filterAddress.toLowerCase())) return false;
+      }
+      if (filterQuote) {
+        const q = filterQuote.toLowerCase();
+        const paddedNum = padQuoteNum(ctx?.quoteNumber);
+        if (!(ctx?.quoteTitle || "").toLowerCase().includes(q) && !paddedNum.includes(q) && !String(ctx?.quoteNumber || "").includes(q)) return false;
+      }
+    }
+
+    // Search: title-only for Reusable; extended for Custom/Customer Request
+    if (search) {
+      const sl = search.toLowerCase();
+      const titleMatch = s.title.toLowerCase().includes(sl);
+      if (s.service_type === "Reusable") {
+        if (!titleMatch) return false;
+      } else {
+        const ctx = serviceContexts[s.service_id];
+        const customerName = `${ctx?.customerFirstName || ""} ${ctx?.customerLastName || ""}`.toLowerCase();
+        const address = [ctx?.addressLine1, ctx?.addressLine2, ctx?.townCity, ctx?.county, ctx?.postcode]
+          .filter(Boolean).join(" ").toLowerCase();
+        const quoteMatch = (ctx?.quoteTitle || "").toLowerCase().includes(sl) || padQuoteNum(ctx?.quoteNumber).includes(sl) || String(ctx?.quoteNumber || "").includes(sl);
+        if (!titleMatch && !customerName.includes(sl) && !address.includes(sl) && !quoteMatch && !(ctx?.jobTitle || "").toLowerCase().includes(sl)) return false;
+      }
+    }
+
     return true;
   });
+
+  // ── Grouping into sections ─────────────────────────────────────────────────
+
+  const sections = (() => {
+    const result = [];
+
+    const reusable = filteredServices.filter(s => s.service_type === "Reusable");
+    if (reusable.length) result.push({ key: "reusable", isReusable: true, ctx: null, services: reusable });
+
+    const quoteGroupsMap = {};
+    filteredServices
+      .filter(s => s.service_type !== "Reusable")
+      .forEach(s => {
+        const ctx = serviceContexts[s.service_id];
+        const key = ctx?.quoteId || `unlinked-${s.service_id}`;
+        if (!quoteGroupsMap[key]) quoteGroupsMap[key] = { key, isReusable: false, ctx: ctx || null, services: [] };
+        quoteGroupsMap[key].services.push(s);
+      });
+
+    Object.values(quoteGroupsMap).forEach(g => result.push(g));
+    return result;
+  })();
+
+  const searchPlaceholder = serviceTypeFilter === "Reusable"
+    ? "Search services..."
+    : "Search by service, customer, job, address or quote...";
+
+  // ── Input style helper ─────────────────────────────────────────────────────
+  const filterInput = {
+    width: "100%", padding: "7px 10px", borderRadius: "6px",
+    background: "#09090b", border: "1px solid #3f3f46",
+    color: "#fff", fontSize: "13px", boxSizing: "border-box",
+  };
+
+  // ── Tile renderer ──────────────────────────────────────────────────────────
+  const renderTile = (s) => {
+    const accentColor = TYPE_ACCENT[s.service_type] || "#3f3f46";
+    return (
+    <div
+      key={s.service_id}
+      className="group relative bg-zinc-900 rounded-xl overflow-hidden hover:scale-[1.02] transition flex flex-col"
+      style={{ minHeight: "200px", border: "1px solid #27272a", borderTop: `3px solid ${accentColor}` }}
+    >
+      <div className="h-24 w-full overflow-hidden flex-shrink-0">
+        <img src={s.image_url} className="h-full w-full object-cover" alt={s.title} />
+      </div>
+      <div className="p-3 flex-grow">
+        <div className="text-base font-bold mb-2">{s.title}</div>
+        <div className="text-xs text-zinc-400">Labour: £{calculatePrice(s.hours)} ({s.hours}h)</div>
+        <div className="text-xs text-zinc-400 mt-0.5">Materials: £{(serviceMaterialsTotals[s.service_id] || 0).toFixed(2)}</div>
+        <div className="text-xs text-sky-400 font-bold mt-0.5">
+          Total: £{(parseFloat(calculatePrice(s.hours)) + (serviceMaterialsTotals[s.service_id] || 0)).toFixed(2)}
+        </div>
+      </div>
+
+      {s.description && (
+        <div style={{ position: "absolute", top: "8px", left: "8px" }}>
+          <button
+            onClick={e => { e.stopPropagation(); setDescriptionPopup(prev => prev === s.service_id ? null : s.service_id); }}
+            style={{ padding: "8px", background: "rgba(0,0,0,0.55)", borderRadius: "9999px", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+            title="Description"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" style={{ height: "16px", width: "16px", color: "#e4e4e7" }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M12 2a10 10 0 110 20A10 10 0 0112 2z" />
+            </svg>
+          </button>
+        </div>
+      )}
+
+      <div style={{ position: "absolute", top: "8px", right: "8px", display: "flex", gap: "6px" }}>
+        <button
+          onClick={e => { e.stopPropagation(); setFormServiceId(s.service_id); }}
+          style={{ padding: "8px", background: "linear-gradient(135deg, #40c2ff, #2d98ff)", borderRadius: "9999px", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+          title="Edit"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" style={{ height: "16px", width: "16px", color: "#020617" }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+          </svg>
+        </button>
+      </div>
+
+      {descriptionPopup === s.service_id && (
+        <div
+          style={{ position: "absolute", top: "96px", left: 0, right: 0, bottom: 0, background: "rgba(9,9,11,0.96)", borderTop: "1px solid #3f3f46", padding: "10px 12px", display: "flex", flexDirection: "column", zIndex: 5 }}
+          onClick={e => e.stopPropagation()}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "8px" }}>
+            <p style={{ fontSize: "12px", color: "#e4e4e7", lineHeight: "1.5", margin: 0, flex: 1, overflowY: "auto" }}>{s.description}</p>
+            <button onClick={e => { e.stopPropagation(); setDescriptionPopup(null); }}
+              style={{ background: "none", border: "none", color: "#71717a", cursor: "pointer", padding: "0 0 0 6px", fontSize: "14px", lineHeight: 1, flexShrink: 0 }}>
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+  };
+
+  // ── Address formatter ──────────────────────────────────────────────────────
+  const formatAddress = (ctx) => [ctx.addressLine1, ctx.addressLine2, ctx.townCity, ctx.county, ctx.postcode].filter(Boolean);
+
+  // ─────────────────────────────────────────────────────────────────────────
 
   if (authLoading || loading) {
     return (
@@ -556,161 +357,126 @@ export default function Services() {
   if (!profile?.business_id) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
-        <div className="text-zinc-400">
-          Please set up your business profile first.
-        </div>
+        <div className="text-zinc-400">Please set up your business profile first.</div>
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      {/* ERROR MESSAGE */}
       {error && (
-        <div className="bg-red-500/10 border border-red-500 rounded-xl p-4 text-red-200">
-          {error}
-        </div>
+        <div className="bg-red-500/10 border border-red-500 rounded-xl p-4 text-red-200">{error}</div>
       )}
 
       {/* SEARCH, FILTERS AND ADD BUTTON */}
       <div className="flex gap-4">
-        {/* Search + filter bubble wrapper */}
         <div style={{ position: "relative", flex: 1 }}>
           <div className="flex items-center gap-2">
             <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search services..."
+              value={search} onChange={e => setSearch(e.target.value)}
+              placeholder={searchPlaceholder}
               className="flex-1 p-3 rounded-xl bg-zinc-900 border border-zinc-700"
             />
             <button
               ref={filterBtnRef}
               onClick={() => setFiltersOpen(p => !p)}
               style={{ position: "relative", flexShrink: 0 }}
-              className={`px-4 py-3 rounded-xl text-sm font-semibold transition ${
-                filtersOpen
-                  ? "bg-sky-500 text-black"
-                  : "bg-zinc-800 text-white hover:bg-zinc-700"
-              }`}
+              className={`px-4 py-3 rounded-xl text-sm font-semibold transition ${filtersOpen ? "bg-sky-500 text-black" : "bg-zinc-800 text-white hover:bg-zinc-700"}`}
             >
               Filters
               {hasNonDefaultFilters && (
-                <span style={{
-                  position: "absolute", top: "-4px", right: "-4px",
-                  width: "8px", height: "8px", borderRadius: "50%",
-                  background: "#f87171",
-                }} />
+                <span style={{ position: "absolute", top: "-4px", right: "-4px", width: "8px", height: "8px", borderRadius: "50%", background: "#f87171" }} />
               )}
             </button>
           </div>
 
-          {/* Filter bubble */}
           {filtersOpen && (
             <div
               ref={filterBubbleRef}
               style={{
-                position: "absolute",
-                top: "calc(100% + 10px)",
-                right: 0,
-                zIndex: 40,
-                width: "280px",
-                background: "#18181b",
-                border: "1px solid #3f3f46",
-                borderRadius: "16px",
-                boxShadow: "0 8px 32px rgba(0,0,0,0.65)",
-                padding: "16px",
+                position: "absolute", top: "calc(100% + 10px)", right: 0, zIndex: 40,
+                width: "300px", background: "#18181b", border: "1px solid #3f3f46",
+                borderRadius: "8px", boxShadow: "0 8px 32px rgba(0,0,0,0.65)", padding: "16px",
               }}
             >
-              <div style={{
-                position: "absolute", top: "-8px", right: "38px",
-                width: 0, height: 0,
-                borderLeft: "8px solid transparent",
-                borderRight: "8px solid transparent",
-                borderBottom: "8px solid #3f3f46",
-              }} />
-              <div style={{
-                position: "absolute", top: "-7px", right: "39px",
-                width: 0, height: 0,
-                borderLeft: "7px solid transparent",
-                borderRight: "7px solid transparent",
-                borderBottom: "7px solid #18181b",
-              }} />
+              <div style={{ position: "absolute", top: "-8px", right: "38px", width: 0, height: 0, borderLeft: "8px solid transparent", borderRight: "8px solid transparent", borderBottom: "8px solid #3f3f46" }} />
+              <div style={{ position: "absolute", top: "-7px", right: "39px", width: 0, height: 0, borderLeft: "7px solid transparent", borderRight: "7px solid transparent", borderBottom: "7px solid #18181b" }} />
 
-              {/* Type filter */}
+              {/* Type */}
               <div style={{ marginBottom: "14px" }}>
-                <p style={{
-                  fontSize: "11px", color: "#71717a", textTransform: "uppercase",
-                  fontWeight: 700, marginBottom: "8px", letterSpacing: "0.06em",
-                }}>
-                  Type
-                </p>
+                <p style={{ fontSize: "11px", color: "#71717a", textTransform: "uppercase", fontWeight: 700, marginBottom: "8px", letterSpacing: "0.06em" }}>Type</p>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-                  {["All", "Reusable", "Custom"].map(t => (
-                    <button
-                      key={t}
-                      onClick={() => setServiceTypeFilter(t)}
+                  {[
+                    { label: "All",              activeBg: "#0ea5e9", activeColor: "#000" },
+                    { label: "Reusable",         activeBg: "#34d399", activeColor: "#000" },
+                    { label: "Custom",           activeBg: "#38bdf8", activeColor: "#000" },
+                    { label: "Customer Request", activeBg: "#fbbf24", activeColor: "#000" },
+                  ].map(({ label, activeBg, activeColor }) => (
+                    <button key={label} onClick={() => setServiceTypeFilter(label)}
                       style={{
-                        padding: "4px 12px", borderRadius: "999px",
-                        fontSize: "12px", fontWeight: 600,
+                        padding: "4px 12px", borderRadius: "6px", fontSize: "12px", fontWeight: 600,
                         cursor: "pointer", border: "none",
-                        background: serviceTypeFilter === t ? "#0ea5e9" : "#27272a",
-                        color:      serviceTypeFilter === t ? "#000"    : "#d4d4d8",
+                        background: serviceTypeFilter === label ? activeBg    : "#27272a",
+                        color:      serviceTypeFilter === label ? activeColor : "#d4d4d8",
                         transition: "background 0.15s",
-                      }}
-                    >
-                      {t}
+                      }}>
+                      {label}
                     </button>
                   ))}
                 </div>
               </div>
 
-              {/* Date range */}
+              {/* Context filters — only shown for Custom / Customer Request */}
+              {showContextFilters && (
+                <div style={{ marginBottom: "14px", paddingBottom: "14px", borderBottom: "1px solid #27272a" }}>
+                  <p style={{ fontSize: "11px", color: "#71717a", textTransform: "uppercase", fontWeight: 700, marginBottom: "10px", letterSpacing: "0.06em" }}>
+                    Quote Context
+                  </p>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                    <div>
+                      <label style={{ fontSize: "11px", color: "#71717a", display: "block", marginBottom: "4px" }}>Customer</label>
+                      <input value={filterCustomer} onChange={e => setFilterCustomer(e.target.value)}
+                        placeholder="First or last name..." style={filterInput} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: "11px", color: "#71717a", display: "block", marginBottom: "4px" }}>Job</label>
+                      <input value={filterJob} onChange={e => setFilterJob(e.target.value)}
+                        placeholder="Job title..." style={filterInput} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: "11px", color: "#71717a", display: "block", marginBottom: "4px" }}>Address</label>
+                      <input value={filterAddress} onChange={e => setFilterAddress(e.target.value)}
+                        placeholder="Street, city, postcode..." style={filterInput} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: "11px", color: "#71717a", display: "block", marginBottom: "4px" }}>Quote</label>
+                      <input value={filterQuote} onChange={e => setFilterQuote(e.target.value)}
+                        placeholder="Title or number..." style={filterInput} />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Created Date */}
               <div style={{ marginBottom: "14px" }}>
-                <p style={{
-                  fontSize: "11px", color: "#71717a", textTransform: "uppercase",
-                  fontWeight: 700, marginBottom: "8px", letterSpacing: "0.06em",
-                }}>
-                  Created Date
-                </p>
+                <p style={{ fontSize: "11px", color: "#71717a", textTransform: "uppercase", fontWeight: 700, marginBottom: "8px", letterSpacing: "0.06em" }}>Created Date</p>
                 <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
                   <div>
                     <label style={{ fontSize: "11px", color: "#71717a", display: "block", marginBottom: "4px" }}>From</label>
-                    <input
-                      type="date"
-                      value={dateFrom}
-                      onChange={e => setDateFrom(e.target.value)}
-                      style={{
-                        width: "100%", padding: "8px 10px", borderRadius: "10px",
-                        background: "#09090b", border: "1px solid #3f3f46",
-                        color: "#fff", fontSize: "13px", boxSizing: "border-box",
-                        colorScheme: "dark",
-                      }}
-                    />
+                    <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+                      style={{ ...filterInput, colorScheme: "dark" }} />
                   </div>
                   <div>
                     <label style={{ fontSize: "11px", color: "#71717a", display: "block", marginBottom: "4px" }}>To</label>
-                    <input
-                      type="date"
-                      value={dateTo}
-                      onChange={e => setDateTo(e.target.value)}
-                      style={{
-                        width: "100%", padding: "8px 10px", borderRadius: "10px",
-                        background: "#09090b", border: "1px solid #3f3f46",
-                        color: "#fff", fontSize: "13px", boxSizing: "border-box",
-                        colorScheme: "dark",
-                      }}
-                    />
+                    <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+                      style={{ ...filterInput, colorScheme: "dark" }} />
                   </div>
                 </div>
               </div>
 
-              {/* Footer */}
-              <div style={{
-                display: "flex", justifyContent: "space-between", alignItems: "center",
-                paddingTop: "10px", borderTop: "1px solid #27272a",
-              }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: "10px", borderTop: "1px solid #27272a" }}>
                 <button
-                  onClick={() => { setServiceTypeFilter("Reusable"); setDateFrom(""); setDateTo(""); }}
+                  onClick={() => { setServiceTypeFilter("Reusable"); setDateFrom(""); setDateTo(""); setFilterCustomer(""); setFilterJob(""); setFilterAddress(""); setFilterQuote(""); }}
                   style={{ fontSize: "12px", color: "#71717a", background: "none", border: "none", cursor: "pointer", padding: 0 }}
                   onMouseEnter={e => (e.target.style.color = "#fff")}
                   onMouseLeave={e => (e.target.style.color = "#71717a")}
@@ -719,11 +485,7 @@ export default function Services() {
                 </button>
                 <button
                   onClick={() => setFiltersOpen(false)}
-                  style={{
-                    padding: "4px 14px", borderRadius: "10px",
-                    background: "#0ea5e9", color: "#000",
-                    fontSize: "12px", fontWeight: 700, border: "none", cursor: "pointer",
-                  }}
+                  style={{ padding: "4px 14px", borderRadius: "6px", background: "#0ea5e9", color: "#000", fontSize: "12px", fontWeight: 700, border: "none", cursor: "pointer" }}
                   onMouseEnter={e => (e.target.style.background = "#38bdf8")}
                   onMouseLeave={e => (e.target.style.background = "#0ea5e9")}
                 >
@@ -734,365 +496,150 @@ export default function Services() {
           )}
         </div>
 
-        <button
-          onClick={openAddModal}
-          className="px-5 py-3 bg-sky-400 text-black rounded-xl font-bold whitespace-nowrap"
-        >
+        <button onClick={() => setFormServiceId(null)} className="px-5 py-3 bg-sky-400 text-black rounded-xl font-bold whitespace-nowrap">
           + Add New
         </button>
       </div>
 
-      {/* HOURLY RATE NOT SET WARNING */}
       {hourlyRate === null && filteredServices.length > 0 && (
         <div className="bg-yellow-500/10 border border-yellow-500 rounded-xl p-4 text-yellow-200 text-sm">
           Hourly rate not configured. Please set up basic pricing to display service prices.
         </div>
       )}
 
-      {/* SERVICES GRID */}
-      {filteredServices.length === 0 ? (
+      {/* SECTIONS */}
+      {sections.length === 0 ? (
         <div className="text-center py-12 text-zinc-400">
-          {search || serviceTypeFilter !== "All" || dateFrom || dateTo
+          {search || hasNonDefaultFilters
             ? "No services found matching your filters."
             : "No services added yet. Click '+ Add New' to get started."}
         </div>
       ) : (
-        <div className="services-grid">
-          {filteredServices.map((s) => (
-            <div
-              key={s.service_id}
-              className="group relative bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden hover:scale-[1.02] transition flex flex-col"
-              style={{ minHeight: '200px' }}
-            >
-              <div className="h-24 w-full overflow-hidden flex-shrink-0">
-                <img
-                  src={s.image_url}
-                  className="h-full w-full object-cover"
-                  alt={s.title}
-                />
-              </div>
-              <div className="p-3 flex-grow">
-                <div className="text-base font-bold mb-2">{s.title}</div>
-                <div className="text-xs text-zinc-400">
-                  Labour: £{calculatePrice(s.hours)} ({s.hours}h)
-                </div>
-                <div className="text-xs text-zinc-400 mt-0.5">
-                  Materials: £{(serviceMaterialsTotals[s.service_id] || 0).toFixed(2)}
-                </div>
-                <div className="text-xs text-sky-400 font-bold mt-0.5">
-                  Total: £{(parseFloat(calculatePrice(s.hours)) + (serviceMaterialsTotals[s.service_id] || 0)).toFixed(2)}
-                </div>
-              </div>
+        <div className="space-y-4">
+          {sections.map(section => {
+            const isCollapsed = !expandedSections.has(section.key);
+            const addrLines = section.ctx ? formatAddress(section.ctx) : [];
+            const sectionType = section.isReusable ? "Reusable"
+              : section.services.some(sv => sv.service_type === "Customer Request") ? "Customer Request"
+              : "Custom";
+            const sectionColor = TYPE_ACCENT[sectionType];
 
-              {/* Info button */}
-              {s.description && (
-                <div style={{ position: 'absolute', top: '8px', left: '8px' }}>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setDescriptionPopup(prev => prev === s.service_id ? null : s.service_id);
-                    }}
-                    style={{
-                      padding: '8px',
-                      background: 'rgba(0,0,0,0.55)',
-                      borderRadius: '9999px',
-                      border: 'none',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                    title="Description"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" style={{ height: '16px', width: '16px', color: '#e4e4e7' }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M12 2a10 10 0 110 20A10 10 0 0112 2z" />
-                    </svg>
-                  </button>
-                </div>
-              )}
+            return (
+              <div key={section.key} style={{ border: "1px solid #3f3f46", borderLeft: `3px solid ${sectionColor}`, borderRadius: "8px", overflow: "hidden" }}>
 
-              {/* Edit button */}
-              <div style={{ position: 'absolute', top: '8px', right: '8px', display: 'flex', gap: '8px' }}>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    openEditModal(s);
-                  }}
-                  style={{
-                    padding: '8px',
-                    background: 'linear-gradient(135deg, #40c2ff, #2d98ff)',
-                    borderRadius: '9999px',
-                    border: 'none',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
-                  title="Edit"
-                >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    style={{ height: '16px', width: '16px', color: '#020617' }}
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
-                    />
-                  </svg>
-                </button>
-              </div>
-
-              {/* Description bubble — overlays card content area on info click */}
-              {descriptionPopup === s.service_id && (
+                {/* Section header */}
                 <div
-                  style={{
-                    position: 'absolute',
-                    top: '96px',
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    background: 'rgba(9, 9, 11, 0.96)',
-                    borderTop: '1px solid #3f3f46',
-                    padding: '10px 12px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    zIndex: 5,
-                  }}
-                  onClick={e => e.stopPropagation()}
+                  onClick={() => toggleSection(section.key)}
+                  style={{ cursor: "pointer", background: "#18181b", padding: "14px 20px", transition: "background 0.15s" }}
+                  onMouseEnter={e => (e.currentTarget.style.background = "#1c1c1f")}
+                  onMouseLeave={e => (e.currentTarget.style.background = "#18181b")}
                 >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
-                    <p style={{ fontSize: '12px', color: '#e4e4e7', lineHeight: '1.5', margin: 0, flex: 1, overflowY: 'auto' }}>
-                      {s.description}
-                    </p>
-                    <button
-                      onClick={e => { e.stopPropagation(); setDescriptionPopup(null); }}
-                      style={{
-                        background: 'none', border: 'none', color: '#71717a',
-                        cursor: 'pointer', padding: '0 0 0 6px',
-                        fontSize: '14px', lineHeight: 1, flexShrink: 0,
-                      }}
-                    >
-                      ✕
-                    </button>
+                  <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "16px" }}>
+                    {/* Section info */}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      {section.isReusable ? (
+                        <span style={{ color: "#34d399", fontWeight: 700, fontSize: "15px" }}>
+                          Basic Reusable Services
+                        </span>
+                      ) : section.ctx ? (
+                        <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                        <span style={{ alignSelf: "flex-start", padding: "2px 10px", borderRadius: "6px", fontSize: "11px", fontWeight: 700, background: sectionColor + "22", color: sectionColor }}>
+                          {sectionType}
+                        </span>
+                        <div style={{ display: "grid", gridTemplateColumns: "max-content 1fr", gap: "3px 14px", alignItems: "start" }}>
+                          <span style={{ color: "#71717a", fontSize: "12px", paddingTop: "1px" }}>Customer</span>
+                          <span style={{ color: "#fff", fontSize: "13px", fontWeight: 600 }}>
+                            {section.ctx.customerFirstName} {section.ctx.customerLastName}
+                          </span>
+                          <span style={{ color: "#71717a", fontSize: "12px", paddingTop: "1px" }}>Job</span>
+                          <span style={{ color: "#e4e4e7", fontSize: "13px" }}>{section.ctx.jobTitle || "—"}</span>
+                          <span style={{ color: "#71717a", fontSize: "12px", paddingTop: "2px" }}>Address</span>
+                          <span style={{ color: "#e4e4e7", fontSize: "13px", lineHeight: "1.65" }}>
+                            {addrLines.length
+                              ? addrLines.map((line, i) => <span key={i}>{line}{i < addrLines.length - 1 ? <br /> : null}</span>)
+                              : <span style={{ color: "#52525b" }}>—</span>}
+                          </span>
+                          <span style={{ color: "#71717a", fontSize: "12px", paddingTop: "1px" }}>Quote</span>
+                          <span style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                            <span style={{ color: "#38bdf8", fontSize: "13px" }}>
+                              {section.ctx.quoteTitle} ({padQuoteNum(section.ctx.quoteNumber)})
+                            </span>
+                            {section.ctx.quoteStatus && (() => {
+                              const sc = QUOTE_STATUS_COLOURS[section.ctx.quoteStatus] || QUOTE_STATUS_COLOURS.Draft;
+                              return (
+                                <span style={{ padding: "2px 8px", borderRadius: "6px", fontSize: "11px", fontWeight: 700, background: sc.bg, color: sc.text }}>
+                                  {section.ctx.quoteStatus}
+                                </span>
+                              );
+                            })()}
+                          </span>
+                        </div>
+                        </div>
+                      ) : (
+                        <span style={{ color: "#71717a", fontSize: "14px" }}>Unlinked Services</span>
+                      )}
+                    </div>
+
+                    {/* Right: count + view quote + chevron */}
+                    <div style={{ display: "flex", alignItems: "center", gap: "10px", flexShrink: 0 }}>
+                      <span style={{ fontSize: "12px", color: "#71717a", background: "#27272a", padding: "2px 10px", borderRadius: "6px", whiteSpace: "nowrap" }}>
+                        {section.services.length} {section.services.length === 1 ? "service" : "services"}
+                      </span>
+                      {!section.isReusable && section.ctx?.customerId && (
+                        <button
+                          onClick={e => { e.stopPropagation(); window.open(`/crm/clients/${section.ctx.customerId}`, "_blank"); }}
+                          style={{ padding: "4px 12px", background: "#0ea5e9", color: "#000", border: "none", borderRadius: "6px", fontSize: "12px", fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}
+                        >
+                          View Client
+                        </button>
+                      )}
+                      {!section.isReusable && section.ctx?.jobId && (
+                        <button
+                          onClick={e => { e.stopPropagation(); window.open(`/crm/jobs/${section.ctx.jobId}`, "_blank"); }}
+                          style={{ padding: "4px 12px", background: "#0ea5e9", color: "#000", border: "none", borderRadius: "6px", fontSize: "12px", fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}
+                        >
+                          View Job
+                        </button>
+                      )}
+                      {!section.isReusable && section.ctx?.quoteId && (
+                        <button
+                          onClick={e => { e.stopPropagation(); window.open(`/crm/quotes/${section.ctx.quoteId}`, "_blank"); }}
+                          style={{ padding: "4px 12px", background: "#0ea5e9", color: "#000", border: "none", borderRadius: "6px", fontSize: "12px", fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}
+                        >
+                          View Quote
+                        </button>
+                      )}
+                      <svg
+                        style={{ width: "20px", height: "20px", color: "#71717a", flexShrink: 0, transform: isCollapsed ? "rotate(-90deg)" : "rotate(0deg)", transition: "transform 0.2s" }}
+                        fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </div>
                   </div>
                 </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
 
-      {/* DELETE CONFIRMATION MODAL */}
-      {deleteConfirmOpen && (
-        <div className="fixed inset-0 z-[100] bg-black/70 flex items-center justify-center p-6">
-          <div className="bg-zinc-900 rounded-2xl p-5 w-full max-w-sm">
-            <h2 className="text-lg font-bold mb-3">Delete Service</h2>
-            <p className="text-zinc-300 text-sm mb-5">
-              Are you sure? This cannot be undone.
-            </p>
-            <div className="flex justify-end gap-3">
-              <button
-                onClick={closeDeleteConfirm}
-                disabled={saving}
-                className="px-4 py-2 text-sm border border-zinc-600 rounded-xl hover:bg-zinc-800 disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={confirmDelete}
-                disabled={saving}
-                className="px-4 py-2 text-sm bg-red-500 text-white rounded-xl font-bold hover:bg-red-400 disabled:opacity-50"
-              >
-                {saving ? "Deleting..." : "Delete"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* MATERIALS SERVICE LINK MODAL */}
-      {isMaterialsModalOpen && (
-        <MaterialServiceLink
-          isOpen={isMaterialsModalOpen}
-          onClose={closeMaterialsModal}
-          serviceId={editingServiceId}
-          profile={profile}
-          onSave={(materialsTotal) => handleMaterialsSaved(materialsTotal)}
-        />
-      )}
-
-      {/* EDIT/ADD MODAL */}
-      {isModalOpen && tempService && (
-        <div className="fixed inset-0 z-40 bg-black/70 flex items-center justify-center p-4">
-          <div className="bg-zinc-900 rounded-2xl w-full max-w-md" style={{ height: '90vh', display: 'flex', flexDirection: 'column' }}>
-            <h2 className="text-lg font-bold px-5 pt-5 pb-3" style={{ flexShrink: 0 }}>
-              {isEditMode && !serviceAutoCreated ? "Edit Service" : "Add Service"}
-            </h2>
-
-            <div className="px-5 pb-3 space-y-3" style={{ flex: '1 1 0', overflowY: 'auto', minHeight: 0 }}>
-              <div>
-                <label className="block text-xs text-zinc-400 mb-1">Service Title</label>
-                <input
-                  className="w-full p-2 rounded-xl bg-zinc-950 border border-zinc-700 text-white text-sm"
-                  value={tempService.title}
-                  onChange={(e) => handleChange("title", e.target.value)}
-                  placeholder="Enter service title"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs text-zinc-400 mb-1">Service Type</label>
-                <div className="flex gap-2">
-                  {["Reusable", "Custom"].map(type => (
-                    <button
-                      key={type}
-                      type="button"
-                      onClick={() => handleChange("service_type", type)}
-                      className={`flex-1 py-2 rounded-xl text-sm font-semibold transition ${
-                        tempService.service_type === type
-                          ? "bg-sky-500 text-black"
-                          : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
-                      }`}
-                    >
-                      {type}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs text-zinc-400 mb-1">Description</label>
-                <textarea
-                  className="w-full p-2 rounded-xl bg-zinc-950 border border-zinc-700 text-white text-sm resize-none"
-                  value={tempService.description}
-                  onChange={(e) => handleChange("description", e.target.value)}
-                  placeholder="Enter service description (optional)"
-                  rows="2"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs text-zinc-400 mb-1">Labour (Hours)</label>
-                <input
-                  className="w-full p-2 rounded-xl bg-zinc-950 border border-zinc-700 text-white text-sm"
-                  inputMode="decimal"
-                  value={tempService.hours}
-                  onChange={(e) =>
-                    setTempService({
-                      ...tempService,
-                      hours: sanitizeNumberInput(e.target.value),
-                    })
-                  }
-                  placeholder="Enter estimated hours"
-                />
-              </div>
-
-              {/* Materials Selection Button */}
-              <div>
-                <label className="block text-xs text-zinc-400 mb-1">Materials</label>
-                <button
-                  type="button"
-                  onClick={openMaterialsModal}
-                  disabled={!editingServiceId && !tempService?.title?.trim()}
-                  className={`w-full p-2 rounded-xl text-sm font-bold transition ${
-                    !editingServiceId && !tempService?.title?.trim()
-                      ? 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
-                      : 'bg-sky-400 text-black hover:bg-sky-300'
-                  }`}
-                >
-                  Materials
-                </button>
-              </div>
-
-              {/* Price Breakdown */}
-              {tempService.hours && (
-                <div className="p-3 bg-zinc-800 rounded-xl space-y-1 text-xs">
-                  <div className="flex justify-between text-zinc-400">
-                    <span>Labour ({tempService.hours}h × £{hourlyRate}):</span>
-                    <span>£{calculateServiceTotal(tempService.hours).labour}</span>
+                {/* Section content */}
+                {!isCollapsed && (
+                  <div style={{ padding: "16px 20px", borderTop: "1px solid #27272a", background: "#0f0f11" }}>
+                    <div className="services-grid">
+                      {section.services.map(renderTile)}
+                    </div>
                   </div>
-                  {selectedMaterialIds.length > 0 && (
-                    <>
-                      <div className="flex justify-between text-zinc-400">
-                        <span>Materials (Base, No VAT):</span>
-                        <span>£{calculateServiceTotal(tempService.hours).materialsBase}</span>
-                      </div>
-                      <div className="flex justify-between text-zinc-400">
-                        <span>Materials markup:</span>
-                        <span>£{calculateServiceTotal(tempService.hours).materialsMarkup}</span>
-                      </div>
-                    </>
-                  )}
-                  <div className="flex justify-between text-sky-400 font-bold pt-1 border-t border-zinc-700">
-                    <span>Total(No VAT):</span>
-                    <span>£{calculateServiceTotal(tempService.hours).total}</span>
-                  </div>
-                </div>
-              )}
-
-              <div>
-                <label className="block text-xs text-zinc-400 mb-1">Service Image</label>
-                <div className="flex gap-2 items-center">
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => handleImageUpload(e.target.files[0])}
-                    className="flex-1 text-xs text-zinc-300"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleGenerateServiceImage}
-                    disabled={fetchingImage || !tempService?.title?.trim()}
-                    className="px-3 py-1.5 bg-zinc-700 text-white text-xs rounded-xl hover:bg-zinc-600 disabled:opacity-40 whitespace-nowrap"
-                    title="Search Pexels for an image using the service title"
-                  >
-                    {fetchingImage ? "Searching…" : "Generate Image"}
-                  </button>
-                </div>
-                {tempService?.image_url && (
-                  <img
-                    src={tempService.image_url}
-                    alt="preview"
-                    className="mt-2 w-full h-20 object-cover rounded-lg"
-                  />
                 )}
               </div>
-            </div>
-
-            <div className="flex justify-between items-center px-5 py-4 border-t border-zinc-800" style={{ flexShrink: 0 }}>
-              {isEditMode && !serviceAutoCreated && (
-                <button
-                  onClick={() => openDeleteConfirm(editingServiceId)}
-                  disabled={saving}
-                  className="px-4 py-2 text-sm bg-red-500 text-white rounded-xl font-bold hover:bg-red-400 disabled:opacity-50"
-                >
-                  Delete
-                </button>
-              )}
-              <div className={`flex gap-3 ${isEditMode && !serviceAutoCreated ? '' : 'ml-auto'}`}>
-                <button
-                  onClick={handleCancelModal}
-                  disabled={saving}
-                  className="px-4 py-2 text-sm border border-zinc-600 rounded-xl hover:bg-zinc-800 disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={saveChanges}
-                  disabled={saving}
-                  className="px-4 py-2 text-sm bg-sky-400 text-black rounded-xl font-bold hover:bg-sky-300 disabled:opacity-50"
-                >
-                  {saving ? "Saving..." : "Save"}
-                </button>
-              </div>
-            </div>
-          </div>
+            );
+          })}
         </div>
+      )}
+
+      {isFormOpen && (
+        <ServiceForm
+          serviceId={formServiceId}
+          profile={profile}
+          onClose={() => setFormServiceId(undefined)}
+          onSaved={handleFormSaved}
+        />
       )}
     </div>
   );

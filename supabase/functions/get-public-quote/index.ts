@@ -38,7 +38,7 @@ serve(async (req) => {
     // Single query — keep quote_id for internal joins, strip it before response
     const { data: quoteRow, error: qe } = await supabase
       .from("quote")
-      .select("quote_id, quote_number, title, description, status, created_at, public_token")
+      .select("quote_id, quote_number, title, description, callout_charge, status, created_at, sent_at, public_token")
       .eq("public_token", public_token)
       .single();
 
@@ -46,7 +46,8 @@ serve(async (req) => {
       return json({ error: "Quote not found" }, 404);
     }
 
-    const { quote_id, ...quote } = quoteRow; // quote_id stays internal
+    // Strip internal fields — quote_id and raw callout_charge stay server-side only
+    const { quote_id, callout_charge: _callout, ...quote } = quoteRow;
 
     // Load services (include service_id + hours for price breakdown)
     const { data: services } = await supabase
@@ -113,9 +114,25 @@ serve(async (req) => {
       }
     }
 
+    // Callout charge — prepended as first service entry
+    const calloutRaw     = parseFloat(quoteRow.callout_charge) || 0;
+    const calloutDisplay = vatRegistered ? calloutRaw * 1.20 : calloutRaw;
+
     // Compute all prices server-side — no formula data sent to client
-    let totalLabour = 0;
+    let totalLabour = calloutDisplay;
     let totalMaterialsIncVat = 0;
+
+    const calloutEntry = calloutRaw > 0 ? [{
+      title:             "Callout Charge",
+      task:              null,
+      quantity:          1,
+      material_names:    [],
+      labour:            calloutDisplay,
+      materials_inc_vat: null,
+      total:             calloutDisplay,
+      has_pricing:       true,
+      is_callout:        true,
+    }] : [];
 
     const enrichedServices = (services || []).map((sv: any) => {
       const svQty     = parseInt(sv.quantity) || 1;
@@ -135,11 +152,12 @@ serve(async (req) => {
       totalLabour          += labour;
       totalMaterialsIncVat += materialsIncVat;
 
-      // Return only display fields — no IDs, no pricing formulas
+      // Return display fields only — no DB IDs sent to client
       return {
         title:              sv.service?.title || "—",
         task:               sv.task || null,
         quantity:           svQty,
+        service_type:       sv.service?.service_type || "Reusable",
         material_names:     mats.map((m: any) => m.name).filter(Boolean),
         labour:             hasPricing ? labour : null,
         materials_inc_vat:  materialsIncVat > 0 ? materialsIncVat : null,
@@ -150,7 +168,7 @@ serve(async (req) => {
 
     return json({
       quote,    // does NOT contain quote_id
-      services: enrichedServices,
+      services: [...calloutEntry, ...enrichedServices],
       vat_registered: vatRegistered,
       total_labour:           totalLabour > 0 ? totalLabour : null,
       total_materials_inc_vat: totalMaterialsIncVat > 0 ? totalMaterialsIncVat : null,

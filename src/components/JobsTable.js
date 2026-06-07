@@ -100,7 +100,7 @@ export default function JobsTable({ jobs, showCustomer = true, emptyMessage = "N
               width: "260px",
               background: "#18181b",
               border: "1px solid #3f3f46",
-              borderRadius: "16px",
+              borderRadius: "8px",
               boxShadow: "0 8px 32px rgba(0,0,0,0.65)",
               padding: "16px",
             }}
@@ -174,7 +174,7 @@ export default function JobsTable({ jobs, showCustomer = true, emptyMessage = "N
               <button
                 onClick={() => setFiltersOpen(false)}
                 style={{
-                  padding: "4px 14px", borderRadius: "10px",
+                  padding: "4px 14px", borderRadius: "6px",
                   background: "#0ea5e9", color: "#000",
                   fontSize: "12px", fontWeight: 700, border: "none", cursor: "pointer",
                 }}

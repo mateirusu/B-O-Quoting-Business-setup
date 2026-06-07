@@ -5,7 +5,7 @@ import { supabase } from "../../../supabaseClient";
 import { sendQuote } from "../../../utils/quoteSend";
 
 const SECTION_KEYS = {
-  details: ["title", "description", "status"],
+  details: ["title", "description", "callout_charge", "status"],
 };
 
 const STATUS_OPTIONS = ["Draft", "Sent", "Accepted", "Declined"];
@@ -37,15 +37,16 @@ export default function QuoteDetails() {
     setLoading(true);
     const { data: q, error: qe } = await supabase
       .from("quote")
-      .select("quote_id, quote_number, title, description, status, created_at")
+      .select("quote_id, quote_number, title, description, callout_charge, status, created_at")
       .eq("quote_id", quoteId)
       .single();
     if (qe || !q) { navigate("/app", { replace: true }); return; }
     setQuote(q);
     const f = {
-      title:       q.title       || "",
-      description: q.description || "",
-      status:      q.status      || "Draft",
+      title:          q.title          || "",
+      description:    q.description    || "",
+      callout_charge: q.callout_charge != null ? String(q.callout_charge) : "0",
+      status:         q.status         || "Draft",
     };
     setFields(f);
     setOriginal(f);
@@ -84,7 +85,13 @@ export default function QuoteDetails() {
     setSectionErr(prev => ({ ...prev, [section]: null }));
     try {
       const update = {};
-      SECTION_KEYS[section].forEach(k => { update[k] = fields[k] || null; });
+      SECTION_KEYS[section].forEach(k => {
+        if (k === "callout_charge") {
+          update[k] = parseFloat(fields[k]) || 0;
+        } else {
+          update[k] = fields[k] || null;
+        }
+      });
       const { error } = await supabase.from("quote").update(update).eq("quote_id", quoteId);
       if (error) throw error;
       setOriginal(prev => ({ ...prev, ...update }));
@@ -198,6 +205,22 @@ export default function QuoteDetails() {
               <textarea value={fields.description} onChange={e => handleChange("description", e.target.value)}
                 rows={4} className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm resize-none"
                 placeholder="Quote description…" />
+            </div>
+            <div>
+              <h3 className="text-sm text-zinc-300 mb-2">Callout Charge</h3>
+              <div style={{ position: "relative" }}>
+                <span style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: "#a1a1aa", fontSize: "14px", pointerEvents: "none" }}>£</span>
+                <input
+                  type="number"
+                  value={fields.callout_charge}
+                  onChange={e => handleChange("callout_charge", e.target.value)}
+                  min="0"
+                  step="0.01"
+                  className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm"
+                  style={{ paddingLeft: "26px" }}
+                  placeholder="0.00"
+                />
+              </div>
             </div>
             <div>
               <h3 className="text-sm text-zinc-300 mb-2">Status</h3>

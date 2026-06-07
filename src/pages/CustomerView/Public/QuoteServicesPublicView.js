@@ -3,12 +3,13 @@ import { useParams } from "react-router-dom";
 import DatePicker from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
 import { supabase } from "../../../supabaseClient";
+import CustomerQuoteServiceLinkPublicView from "./CustomerQuoteServiceLinkPublicView";
 
 const STATUS_COLOURS = {
-  Draft:    { bg: "#3f3f46", text: "#a1a1aa" },
-  Sent:     { bg: "#0c4a6e", text: "#38bdf8" },
-  Accepted: { bg: "#064e3b", text: "#34d399" },
-  Declined: { bg: "#450a0a", text: "#f87171" },
+  Draft:    { bg: "rgba(113,113,122,0.2)", text: "#a1a1aa" },
+  Sent:     { bg: "rgba(14,165,233,0.2)",  text: "#38bdf8" },
+  Accepted: { bg: "rgba(52,211,153,0.2)",  text: "#34d399" },
+  Declined: { bg: "rgba(248,113,113,0.2)", text: "#f87171" },
 };
 
 function fmt(d) {
@@ -40,36 +41,26 @@ const newSlot = () => ({
   rangeEnabled: false, endDate: null,
 });
 
-// Builds "DD/MM/YYYY" mask, replacing trailing hyphens for un-typed positions.
-// e.g. digits="1206" → "12/06/----"
 function formatMasked(digits) {
   const tpl = ["-","-","/","-","-","/","-","-","-","-"];
   let di = 0;
   return tpl.map(ch => ch === "/" ? "/" : di < digits.length ? digits[di++] : "-").join("");
 }
 
-// Character index in the masked string right after n typed digits,
-// accounting for the two "/" separators at indices 2 and 5.
-// e.g. 2 digits → position 3 (after "12/"), 4 digits → position 6 (after "12/06/")
 function cursorPos(n) {
   if (n <= 1) return n;
-  if (n <= 3) return n + 1; // past first "/"
-  return n + 2;             // past both "/"s
+  if (n <= 3) return n + 1;
+  return n + 2;
 }
 
-// Converts a cursor position in the masked string to the digit index
-// (= number of typed digits to the left of the cursor).
-// Positions that land on "/" separators map to the digit index just after them.
-// Mask layout: D D / M M / Y Y Y Y  (indices 0-9, "/" at 2 and 5)
 function maskedCursorToDigitIdx(p) {
-  if (p <= 2) return p;       // 0→0, 1→1, 2→2
-  if (p === 3) return 2;      // right after first "/"
-  if (p <= 5) return p - 1;  // 4→3, 5→4
-  if (p === 6) return 4;      // right after second "/"
-  return p - 2;               // 7→5, 8→6, 9→7, 10→8
+  if (p <= 2) return p;
+  if (p === 3) return 2;
+  if (p <= 5) return p - 1;
+  if (p === 6) return 4;
+  return p - 2;
 }
 
-// Returns true if the slot's time range is invalid (start >= end)
 function slotHasError(slot) {
   if (!slot.rangeEnabled) {
     if (!slot.fromH || !slot.toH) return false;
@@ -86,23 +77,18 @@ function slotHasError(slot) {
   }
 }
 
-// Masked date input with static --/--/---- template.
-// Keys are intercepted via onKeyDown so hyphens stay in place while typing.
-// Green background = valid future date; red = past or invalid.
 const DateMaskInput = forwardRef(({ value, onClick, onChange, onDateChange, forceInvalid }, ref) => {
   const [digits, setDigits] = useState("");
   const isTyping    = useRef(false);
   const inputRef    = useRef(null);
-  const wantCursor  = useRef(null); // desired cursor position after next render
+  const wantCursor  = useRef(null);
 
-  // Wire both the forwarded ref and our own internal ref to the same element
   const setRef = useCallback((el) => {
     inputRef.current = el;
     if (typeof ref === "function") ref(el);
     else if (ref) ref.current = el;
   }, [ref]);
 
-  // Apply cursor position right after the DOM updates (before paint)
   useLayoutEffect(() => {
     if (wantCursor.current !== null && inputRef.current) {
       const pos = wantCursor.current;
@@ -111,21 +97,16 @@ const DateMaskInput = forwardRef(({ value, onClick, onChange, onDateChange, forc
     }
   });
 
-  // Sync only when the calendar selects a date (not during keyboard input)
   useEffect(() => {
     if (isTyping.current) { isTyping.current = false; return; }
     setDigits(value ? value.replace(/\D/g, "").slice(0, 8) : "");
   }, [value]);
 
-  // Core update: new digit string → state + parent callbacks
   const commitStr = (nd, newDigitIdx) => {
     isTyping.current = true;
     wantCursor.current = cursorPos(newDigitIdx);
     setDigits(nd);
     onChange({ target: { value: nd.length > 0 ? formatMasked(nd) : "" } });
-    // react-datepicker's handleChangeRaw (passed as onChange to customInput)
-    // only stores the raw string — it never parses or updates `selected`.
-    // So we parse the date ourselves and call onDateChange directly.
     if (nd.length === 8) {
       const date = new Date(`${nd.slice(4, 8)}-${nd.slice(2, 4)}-${nd.slice(0, 2)}`);
       onDateChange(isNaN(date.getTime()) ? null : date);
@@ -137,29 +118,23 @@ const DateMaskInput = forwardRef(({ value, onClick, onChange, onDateChange, forc
   const handleKeyDown = (e) => {
     const el = inputRef.current;
     if (!el) return;
-    // Read where the cursor actually is in the masked string
     const p  = el.selectionStart ?? digits.length;
     const di = maskedCursorToDigitIdx(p);
 
     if (e.key === "Backspace") {
       e.preventDefault();
       if (di === 0) return;
-      // Delete digit to the left of cursor
       commitStr(digits.slice(0, di - 1) + digits.slice(di), di - 1);
       return;
     }
-
     if (e.key === "Delete") {
       e.preventDefault();
       if (di >= digits.length) return;
-      // Delete digit to the right of cursor
       commitStr(digits.slice(0, di) + digits.slice(di + 1), di);
       return;
     }
-
     if (/^\d$/.test(e.key)) {
       e.preventDefault();
-      // Insert digit at cursor, shift right, cap at 8 chars
       const nd = (digits.slice(0, di) + e.key + digits.slice(di)).slice(0, 8);
       commitStr(nd, di + 1);
     }
@@ -173,14 +148,12 @@ const DateMaskInput = forwardRef(({ value, onClick, onChange, onDateChange, forc
     const di2 = maskedCursorToDigitIdx(el.selectionEnd ?? el.selectionStart ?? 0);
     const pasted = e.clipboardData.getData("text").replace(/\D/g, "");
     if (!pasted) return;
-    // Replace selected digit range with pasted digits, cap at 8
     const nd = (digits.slice(0, di1) + pasted + digits.slice(di2)).slice(0, 8);
     commitStr(nd, Math.min(di1 + pasted.length, 8));
   };
 
-  // Validation (only when all 8 digits are present)
-  let border = "1px solid #e5e7eb";
-  let bg = "#fff";
+  let border = "1px solid rgba(255,255,255,0.09)";
+  let bg = "rgba(2,6,15,0.8)";
   let errorMsg = null;
 
   if (digits.length === 8) {
@@ -192,16 +165,15 @@ const DateMaskInput = forwardRef(({ value, onClick, onChange, onDateChange, forc
     today.setHours(0, 0, 0, 0);
 
     if (isNaN(date.getTime()) || d < 1 || d > 31 || m < 1 || m > 12) {
-      bg = "#fef2f2"; border = "1px solid #fca5a5"; errorMsg = "Invalid date";
+      bg = "rgba(248,113,113,0.12)"; border = "1px solid #f87171"; errorMsg = "Invalid date";
     } else if (date < today) {
-      bg = "#fef2f2"; border = "1px solid #fca5a5"; errorMsg = "Date can't be in the past";
+      bg = "rgba(248,113,113,0.12)"; border = "1px solid #f87171"; errorMsg = "Date can't be in the past";
     } else {
-      bg = "#f0fdf4"; border = "1px solid #86efac";
+      bg = "rgba(52,211,153,0.12)"; border = "1px solid #34d399";
     }
   }
 
-  // Slot-level error from parent overrides internal colours
-  if (forceInvalid) { bg = "#fef2f2"; border = "1px solid #fca5a5"; errorMsg = null; }
+  if (forceInvalid) { bg = "rgba(248,113,113,0.12)"; border = "1px solid #f87171"; errorMsg = null; }
 
   return (
     <div style={{ position: "relative", width: "100%" }}>
@@ -217,8 +189,8 @@ const DateMaskInput = forwardRef(({ value, onClick, onChange, onDateChange, forc
           style={{
             width: "100%", boxSizing: "border-box",
             padding: "8px 34px 8px 10px",
-            borderRadius: "8px", border,
-            background: bg, color: "#111827",
+            borderRadius: "6px", border,
+            background: bg, color: "#f4f4f5",
             fontSize: "14px", fontFamily: "inherit", outline: "none",
           }}
         />
@@ -229,7 +201,7 @@ const DateMaskInput = forwardRef(({ value, onClick, onChange, onDateChange, forc
           style={{
             position: "absolute", right: "8px",
             background: "none", border: "none",
-            cursor: "pointer", padding: 0, color: "#9ca3af",
+            cursor: "pointer", padding: 0, color: "#71717a",
             display: "flex", alignItems: "center",
           }}
         >
@@ -241,7 +213,7 @@ const DateMaskInput = forwardRef(({ value, onClick, onChange, onDateChange, forc
       {errorMsg && (
         <p style={{
           position: "absolute", top: "calc(100% + 2px)", left: 0,
-          fontSize: "11px", color: "#ef4444", margin: 0, whiteSpace: "nowrap", zIndex: 10,
+          fontSize: "11px", color: "#f87171", margin: 0, whiteSpace: "nowrap", zIndex: 10,
         }}>
           {errorMsg}
         </p>
@@ -250,25 +222,25 @@ const DateMaskInput = forwardRef(({ value, onClick, onChange, onDateChange, forc
   );
 });
 
-// Shared styles for both time-picker fields
 const timefieldBase = (invalid, valid) => ({
-  padding: "7px 4px", borderRadius: "8px", fontSize: "14px", fontFamily: "inherit",
+  padding: "7px 4px", borderRadius: "6px", fontSize: "14px", fontFamily: "inherit",
   boxSizing: "border-box", textAlign: "center",
-  background: invalid ? "#fef2f2" : valid ? "#f0fdf4" : "#fff",
-  border:     `1px solid ${invalid ? "#fca5a5" : valid ? "#86efac" : "#e5e7eb"}`,
-  color: "#111827",
+  background: invalid ? "rgba(248,113,113,0.12)" : valid ? "rgba(52,211,153,0.12)" : "rgba(2,6,15,0.8)",
+  border:     `1px solid ${invalid ? "#f87171" : valid ? "#34d399" : "rgba(255,255,255,0.09)"}`,
+  color: "#f4f4f5",
 });
 const dropdownList = {
   position: "absolute", top: "calc(100% + 2px)", left: 0,
-  background: "#fff", border: "1px solid #e5e7eb", borderRadius: "8px",
-  boxShadow: "0 4px 12px rgba(0,0,0,0.1)", zIndex: 9999, overflow: "auto",
+  background: "#0e1729", border: "1px solid rgba(255,255,255,0.09)", borderRadius: "6px",
+  boxShadow: "0 4px 16px rgba(0,0,0,0.5)", zIndex: 9999, overflow: "auto",
 };
 const dropdownItem = (active) => ({
   padding: "6px 10px", cursor: "pointer", fontSize: "14px", textAlign: "center",
-  background: active ? "#f0f9ff" : "#fff", color: active ? "#0369a1" : "#111827",
+  background: active ? "rgba(14,165,233,0.15)" : "#0e1729",
+  color: active ? "#38bdf8" : "#f4f4f5",
 });
 
-// ── Multi-date inline calendar for the "Add Multiple Dates" modal ─────────────
+// ── Multi-date inline calendar ─────────────────────────────────────────────────
 function MultiCalendar({ selectedDates, onToggle }) {
   const [view, setView] = useState(() => {
     const d = new Date();
@@ -278,7 +250,7 @@ function MultiCalendar({ selectedDates, onToggle }) {
   const m = view.getMonth();
   const today = new Date(); today.setHours(0, 0, 0, 0);
 
-  const firstDow  = (new Date(y, m, 1).getDay() + 6) % 7; // Monday=0
+  const firstDow  = (new Date(y, m, 1).getDay() + 6) % 7;
   const daysInM   = new Date(y, m + 1, 0).getDate();
   const isSel     = (d) => selectedDates.some(s => s.toDateString() === d.toDateString());
   const isDisabled = (d) => d < today;
@@ -292,7 +264,7 @@ function MultiCalendar({ selectedDates, onToggle }) {
 
   const navBtn = (dir, label) => (
     <button type="button" onClick={() => setView(new Date(y, m + dir, 1))}
-      style={{ background: "none", border: "none", cursor: "pointer", fontSize: "18px", color: "#374151", padding: "2px 8px", borderRadius: "6px" }}>
+      style={{ background: "none", border: "none", cursor: "pointer", fontSize: "18px", color: "#a1a1aa", padding: "2px 8px", borderRadius: "6px" }}>
       {label}
     </button>
   );
@@ -301,12 +273,12 @@ function MultiCalendar({ selectedDates, onToggle }) {
     <div>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "10px" }}>
         {navBtn(-1, "‹")}
-        <span style={{ fontWeight: 700, fontSize: "14px", color: "#111827" }}>{monthLabel}</span>
+        <span style={{ fontWeight: 700, fontSize: "14px", color: "#f4f4f5" }}>{monthLabel}</span>
         {navBtn(1, "›")}
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: "2px", marginBottom: "4px" }}>
         {["Mo","Tu","We","Th","Fr","Sa","Su"].map(d => (
-          <div key={d} style={{ textAlign: "center", fontSize: "11px", fontWeight: 600, color: "#9ca3af", padding: "2px 0" }}>{d}</div>
+          <div key={d} style={{ textAlign: "center", fontSize: "11px", fontWeight: 600, color: "#71717a", padding: "2px 0" }}>{d}</div>
         ))}
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: "2px" }}>
@@ -320,10 +292,10 @@ function MultiCalendar({ selectedDates, onToggle }) {
               style={{
                 textAlign: "center", padding: "7px 2px", borderRadius: "6px", fontSize: "13px",
                 lineHeight: 1, cursor: disabled ? "default" : "pointer",
-                background: selected ? "#0369a1" : "transparent",
-                color: disabled ? "#d1d5db" : selected ? "#fff" : "#111827",
+                background: selected ? "#0ea5e9" : "transparent",
+                color: disabled ? "#52525b" : selected ? "#fff" : "#f4f4f5",
                 fontWeight: selected || todayDay ? 700 : 400,
-                outline: todayDay && !selected ? "2px solid #e5e7eb" : "none",
+                outline: todayDay && !selected ? "2px solid rgba(255,255,255,0.09)" : "none",
                 outlineOffset: "-2px",
               }}
             >
@@ -336,7 +308,7 @@ function MultiCalendar({ selectedDates, onToggle }) {
   );
 }
 
-// ── Hour picker 00–23 — custom white dropdown ─────────────────────────────────
+// ── Hour picker ────────────────────────────────────────────────────────────────
 function HourSelect({ value, onChange, invalid, valid }) {
   const [open, setOpen] = useState(false);
   return (
@@ -353,7 +325,7 @@ function HourSelect({ value, onChange, invalid, valid }) {
         }}
       >
         <span>{value || "--"}</span>
-        <span style={{ fontSize: "9px", color: "#9ca3af", lineHeight: 1, flexShrink: 0 }}>▾</span>
+        <span style={{ fontSize: "9px", color: "#71717a", lineHeight: 1, flexShrink: 0 }}>▾</span>
       </div>
       {open && (
         <div style={{ ...dropdownList, maxHeight: "160px", minWidth: "58px" }}>
@@ -367,7 +339,7 @@ function HourSelect({ value, onChange, invalid, valid }) {
   );
 }
 
-// ── Minute picker — preset 00/15/30/45 but accepts any typed value ────────────
+// ── Minute picker ──────────────────────────────────────────────────────────────
 function MinuteInput({ value, onChange, invalid, valid }) {
   const [open, setOpen] = useState(false);
   return (
@@ -401,8 +373,7 @@ export default function QuoteServicesPublicView() {
   const [loading,       setLoading]       = useState(true);
   const [error,         setError]         = useState(null);
 
-  // Accept / decline flow
-  const [action,        setAction]        = useState(null); // "accept" | "decline" | null
+  const [action,        setAction]        = useState(null);
   const [acceptNotes,   setAcceptNotes]   = useState("");
   const [declineNotes,  setDeclineNotes]  = useState("");
   const [timeslots,     setTimeslots]     = useState([newSlot()]);
@@ -410,7 +381,8 @@ export default function QuoteServicesPublicView() {
   const [submitted,     setSubmitted]     = useState(false);
   const [submitError,   setSubmitError]   = useState(null);
 
-  // Expandable services
+  const [amendResult,  setAmendResult]  = useState(null);
+
   const [expandedSvcs,   setExpandedSvcs]   = useState(new Set());
   const toggleSvc = (i) => setExpandedSvcs(prev => {
     const next = new Set(prev);
@@ -418,7 +390,6 @@ export default function QuoteServicesPublicView() {
     return next;
   });
 
-  // Multi-date modal state
   const [multiOpen,      setMultiOpen]      = useState(false);
   const [multiDates,     setMultiDates]     = useState([]);
   const [multiFromH,     setMultiFromH]     = useState("");
@@ -427,23 +398,23 @@ export default function QuoteServicesPublicView() {
   const [multiToM,       setMultiToM]       = useState("");
   const [multiOvernight, setMultiOvernight] = useState(false);
 
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      try {
-        const { data: result, error: e } = await supabase.functions.invoke(
-          "get-public-quote",
-          { body: { public_token: publicToken } }
-        );
-        if (e || result?.error) throw new Error(result?.error || e?.message || "Failed to load quote");
-        setData(result);
-      } catch (err) {
-        setError(err.message || "Quote not found.");
-      } finally {
-        setLoading(false);
-      }
-    })();
+  const loadQuote = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data: result, error: e } = await supabase.functions.invoke(
+        "get-public-quote",
+        { body: { public_token: publicToken } }
+      );
+      if (e || result?.error) throw new Error(result?.error || e?.message || "Failed to load quote");
+      setData(result);
+    } catch (err) {
+      setError(err.message || "Quote not found.");
+    } finally {
+      setLoading(false);
+    }
   }, [publicToken]);
+
+  useEffect(() => { loadQuote(); }, [publicToken]);
 
   const addSlot    = () => setTimeslots(prev => [...prev, newSlot()]);
   const removeSlot = (id) => setTimeslots(prev => prev.filter(s => s.id !== id));
@@ -550,17 +521,17 @@ export default function QuoteServicesPublicView() {
   // ── Loading / error ────────────────────────────────────────────────────────
   if (loading) {
     return (
-      <div style={{ minHeight: "100vh", background: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <p style={{ color: "#6b7280", fontSize: "14px" }}>Loading quote…</p>
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <p style={{ color: "#71717a", fontSize: "14px" }}>Loading quote…</p>
       </div>
     );
   }
   if (error) {
     return (
-      <div style={{ minHeight: "100vh", background: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
         <div style={{ textAlign: "center" }}>
-          <p style={{ color: "#ef4444", fontSize: "14px", marginBottom: "8px" }}>{error}</p>
-          <p style={{ color: "#9ca3af", fontSize: "13px" }}>Please contact us if you believe this is an error.</p>
+          <p style={{ color: "#f87171", fontSize: "14px", marginBottom: "8px" }}>{error}</p>
+          <p style={{ color: "#71717a", fontSize: "13px" }}>Please contact us if you believe this is an error.</p>
         </div>
       </div>
     );
@@ -582,15 +553,15 @@ export default function QuoteServicesPublicView() {
   const hasAnyError = timeslots.some(slotHasError);
 
   const card = {
-    background: "#fff", borderRadius: "12px",
-    border: "1px solid #e5e7eb", marginBottom: "24px",
+    background: "#0e1729", borderRadius: "8px",
+    border: "1px solid rgba(255,255,255,0.09)", marginBottom: "24px",
   };
 
   const inputStyle = {
-    padding: "8px 10px", borderRadius: "8px", border: "1px solid #e5e7eb",
+    padding: "8px 10px", borderRadius: "6px", border: "1px solid rgba(255,255,255,0.09)",
     fontSize: "14px", fontFamily: "inherit", outline: "none",
-    colorScheme: "light", boxSizing: "border-box",
-    background: "#fff", color: "#111827",
+    colorScheme: "dark", boxSizing: "border-box",
+    background: "rgba(2,6,15,0.7)", color: "#f4f4f5",
   };
 
   const textareaStyle = {
@@ -600,20 +571,30 @@ export default function QuoteServicesPublicView() {
 
   return (
     <>
-      {/* react-datepicker z-index fix */}
-      <style>{`.react-datepicker-popper { z-index: 9999 !important; }`}</style>
+      {/* react-datepicker dark overrides */}
+      <style>{`
+        .react-datepicker-popper { z-index: 9999 !important; }
+        .react-datepicker { background: #0e1729 !important; border-color: rgba(255,255,255,0.09) !important; color: #f4f4f5 !important; }
+        .react-datepicker__header { background: #111e33 !important; border-color: rgba(255,255,255,0.09) !important; }
+        .react-datepicker__current-month, .react-datepicker__day-name, .react-datepicker__day { color: #f4f4f5 !important; }
+        .react-datepicker__day:hover { background: rgba(255,255,255,0.09) !important; }
+        .react-datepicker__day--selected { background: #0ea5e9 !important; color: #fff !important; }
+        .react-datepicker__day--disabled { color: #52525b !important; }
+        .react-datepicker__navigation-icon::before { border-color: #a1a1aa !important; }
+        .react-datepicker__triangle::before, .react-datepicker__triangle::after { border-bottom-color: rgba(255,255,255,0.09) !important; border-top-color: rgba(255,255,255,0.09) !important; }
+      `}</style>
 
-      <div style={{ minHeight: "100vh", background: "#f9fafb", fontFamily: "system-ui, -apple-system, sans-serif", color: "#111827" }}>
+      <div style={{ minHeight: "100vh", fontFamily: "system-ui, -apple-system, sans-serif", color: "#f4f4f5" }}>
 
         {/* ── Business header ── */}
-        <div style={{ background: "#0369a1", padding: "20px 40px" }}>
+        <div style={{ padding: "20px 40px 16px" }}>
           <div style={{ maxWidth: "760px", margin: "0 auto", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div>
-              <p style={{ color: "#fff", fontSize: "20px", fontWeight: 700, margin: 0 }}>
+              <p style={{ color: "#f4f4f5", fontSize: "20px", fontWeight: 700, margin: 0 }}>
                 {business?.business_name || "Quotation"}
               </p>
               {(business?.phone || business?.email) && (
-                <p style={{ color: "rgba(255,255,255,0.8)", fontSize: "13px", margin: "4px 0 0" }}>
+                <p style={{ color: "#71717a", fontSize: "13px", margin: "4px 0 0" }}>
                   {[business.phone, business.email].filter(Boolean).join("  ·  ")}
                 </p>
               )}
@@ -621,9 +602,8 @@ export default function QuoteServicesPublicView() {
             <div>
               <span style={{
                 display: "inline-block", padding: "4px 14px",
-                borderRadius: "999px", fontSize: "12px", fontWeight: 600,
+                borderRadius: "6px", fontSize: "12px", fontWeight: 600,
                 background: sc.bg, color: sc.text,
-                border: "1px solid rgba(255,255,255,0.2)",
               }}>
                 {quote.status}
               </span>
@@ -637,22 +617,22 @@ export default function QuoteServicesPublicView() {
           <div style={{ ...card, padding: "28px 32px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: "16px" }}>
               <div>
-                <p style={{ fontSize: "24px", fontWeight: 700, margin: "0 0 6px" }}>{quote.title}</p>
+                <p style={{ fontSize: "24px", fontWeight: 700, margin: "0 0 6px", color: "#f4f4f5" }}>{quote.title}</p>
                 {quote.description && (
-                  <p style={{ color: "#374151", fontSize: "14px", margin: 0, lineHeight: 1.6 }}>
+                  <p style={{ color: "#a1a1aa", fontSize: "14px", margin: 0, lineHeight: 1.6 }}>
                     {quote.description}
                   </p>
                 )}
               </div>
               <div style={{ textAlign: "right", flexShrink: 0 }}>
-                <p style={{ fontSize: "13px", color: "#6b7280", margin: "0 0 4px" }}>
-                  Reference: <strong style={{ color: "#111827" }}>#{fmtRef(quote.quote_number)}</strong>
+                <p style={{ fontSize: "13px", color: "#71717a", margin: "0 0 4px" }}>
+                  Reference: <strong style={{ color: "#f4f4f5" }}>#{fmtRef(quote.quote_number)}</strong>
                 </p>
-                <p style={{ fontSize: "13px", color: "#6b7280", margin: "0 0 4px" }}>
-                  Date: <strong style={{ color: "#111827" }}>{fmt(quote.created_at)}</strong>
+                <p style={{ fontSize: "13px", color: "#71717a", margin: "0 0 4px" }}>
+                  Date: <strong style={{ color: "#f4f4f5" }}>{fmt(quote.sent_at || quote.created_at)}</strong>
                 </p>
-                <p style={{ fontSize: "13px", color: "#6b7280", margin: 0 }}>
-                  Valid until: <strong style={{ color: "#111827" }}>{addDays(quote.created_at, 30)}</strong>
+                <p style={{ fontSize: "13px", color: "#71717a", margin: 0 }}>
+                  Valid until: <strong style={{ color: "#f4f4f5" }}>{addDays(quote.sent_at || quote.created_at, 30)}</strong>
                 </p>
               </div>
             </div>
@@ -660,25 +640,24 @@ export default function QuoteServicesPublicView() {
 
           {/* ── Scope of Works ── */}
           <div style={{ ...card, overflow: "hidden" }}>
-            <div style={{ padding: "20px 24px", borderBottom: "1px solid #f3f4f6" }}>
-              <p style={{ fontWeight: 700, fontSize: "16px", margin: 0 }}>Scope of Works</p>
+            <div style={{ padding: "20px 24px", borderBottom: "1px solid rgba(255,255,255,0.09)" }}>
+              <p style={{ fontWeight: 700, fontSize: "16px", margin: 0, color: "#f4f4f5" }}>Scope of Works</p>
             </div>
 
             {services.length > 0 && (
               <div style={{ padding: "10px 24px 0" }}>
-                <p style={{ fontWeight: 700, fontSize: "14px", color: "#0369a1", margin: 0 }}>Services</p>
+                <p style={{ fontWeight: 700, fontSize: "14px", color: "#38bdf8", margin: 0 }}>Services</p>
               </div>
             )}
 
             {services.length === 0 ? (
-              <p style={{ padding: "24px", color: "#9ca3af", fontSize: "14px", margin: 0 }}>No services listed.</p>
+              <p style={{ padding: "24px", color: "#71717a", fontSize: "14px", margin: 0 }}>No services listed.</p>
             ) : services.map((sv, i) => {
               const isExpanded = expandedSvcs.has(i);
               const hasDetail  = sv.material_names?.length > 0 || sv.has_pricing;
 
               return (
-                <div key={i} style={{ borderTop: "1px solid #f3f4f6" }}>
-                  {/* Clickable service header */}
+                <div key={i} style={{ borderTop: "1px solid #111e33" }}>
                   <div
                     onClick={() => hasDetail && toggleSvc(i)}
                     style={{
@@ -688,14 +667,14 @@ export default function QuoteServicesPublicView() {
                     }}
                   >
                     <div style={{ flex: 1 }}>
-                      <p style={{ fontWeight: 600, fontSize: "14px", margin: "0 0 3px" }}>{sv.title || "—"}</p>
-                      {sv.task && <p style={{ color: "#6b7280", fontSize: "13px", margin: 0 }}>{sv.task}</p>}
+                      <p style={{ fontWeight: 600, fontSize: "14px", margin: "0 0 3px", color: "#f4f4f5" }}>{sv.title || "—"}</p>
+                      {sv.task && <p style={{ color: "#71717a", fontSize: "13px", margin: 0 }}>{sv.task}</p>}
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: "12px", flexShrink: 0 }}>
-                      <span style={{ fontSize: "13px", color: "#6b7280" }}>Qty: {sv.quantity}</span>
+                      <span style={{ fontSize: "13px", color: "#71717a" }}>Qty: {sv.quantity}</span>
                       {hasDetail && (
                         <span style={{
-                          fontSize: "11px", color: "#9ca3af",
+                          fontSize: "11px", color: "#71717a",
                           transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)",
                           transition: "transform 0.2s",
                           display: "inline-block",
@@ -704,12 +683,10 @@ export default function QuoteServicesPublicView() {
                     </div>
                   </div>
 
-                  {/* Expanded detail */}
                   {isExpanded && hasDetail && (
-                    <div style={{ padding: "0 24px 16px", borderTop: "1px solid #f9fafb" }}>
-                      {/* Materials */}
+                    <div style={{ padding: "0 24px 16px", borderTop: "1px solid #111e33" }}>
                       {sv.material_names?.length > 0 && (
-                        <div style={{ fontSize: "13px", color: "#374151", marginBottom: sv.has_pricing ? "10px" : 0 }}>
+                        <div style={{ fontSize: "13px", color: "#a1a1aa", marginBottom: sv.has_pricing ? "10px" : 0 }}>
                           <span style={{ fontWeight: 600 }}>Materials:</span>
                           {sv.material_names.map((name, mi) => (
                             <p key={mi} style={{ margin: "2px 0 0 12px" }}>{name}</p>
@@ -717,24 +694,23 @@ export default function QuoteServicesPublicView() {
                         </div>
                       )}
 
-                      {/* Pricing */}
                       {sv.has_pricing && (
-                        <div style={{ fontSize: "13px", color: "#374151" }}>
+                        <div style={{ fontSize: "13px", color: "#a1a1aa" }}>
                           <span style={{ fontWeight: 600 }}>Pricing:</span>
                           <div style={{ marginLeft: "12px", marginTop: "3px" }}>
                             {sv.labour != null && (
                               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "3px" }}>
-                                <span>Labour{vatRegistered ? " (inc. 20% VAT)" : ""}</span>
+                                <span>{sv.is_callout ? "Callout Charge" : "Labour"}{vatRegistered ? " (inc. 20% VAT)" : ""}</span>
                                 <span>{fmtGbp(sv.labour)}</span>
                               </div>
                             )}
                             {sv.materials_inc_vat != null && (
                               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "3px" }}>
-                                <span style={{ color: "#6b7280" }}>Materials (inc. 20% VAT)</span>
+                                <span style={{ color: "#71717a" }}>Materials (inc. 20% VAT)</span>
                                 <span>{fmtGbp(sv.materials_inc_vat)}</span>
                               </div>
                             )}
-                            <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700 }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, color: "#f4f4f5" }}>
                               <span>Total</span>
                               <span>{fmtGbp(sv.total)}</span>
                             </div>
@@ -749,21 +725,21 @@ export default function QuoteServicesPublicView() {
 
             {/* ── Price Breakdown ── */}
             {(totalLabour > 0 || totalMat > 0) && (
-              <div style={{ borderTop: "2px solid #e5e7eb", padding: "16px 24px" }}>
-                <p style={{ fontWeight: 700, fontSize: "14px", color: "#0369a1", margin: "0 0 12px" }}>Total Price Breakdown</p>
+              <div style={{ borderTop: "2px solid rgba(255,255,255,0.09)", padding: "16px 24px" }}>
+                <p style={{ fontWeight: 700, fontSize: "14px", color: "#38bdf8", margin: "0 0 12px" }}>Total Price Breakdown</p>
                 {totalLabour > 0 && (
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: "13px", marginBottom: "6px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: "13px", marginBottom: "6px", color: "#a1a1aa" }}>
                     <span>Labour{vatRegistered ? " (inc. 20% VAT)" : ""}</span>
-                    <span style={{ fontWeight: 600 }}>{fmtGbp(totalLabour)}</span>
+                    <span style={{ fontWeight: 600, color: "#f4f4f5" }}>{fmtGbp(totalLabour)}</span>
                   </div>
                 )}
                 {totalMat > 0 && (
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: "13px", marginBottom: "6px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: "13px", marginBottom: "6px", color: "#a1a1aa" }}>
                     <span>Materials (inc. 20% VAT)</span>
-                    <span style={{ fontWeight: 600 }}>{fmtGbp(totalMat)}</span>
+                    <span style={{ fontWeight: 600, color: "#f4f4f5" }}>{fmtGbp(totalMat)}</span>
                   </div>
                 )}
-                <div style={{ borderTop: "1px solid #e5e7eb", marginTop: "6px", paddingTop: "10px", display: "flex", justifyContent: "space-between", fontSize: "14px", fontWeight: 700 }}>
+                <div style={{ borderTop: "1px solid rgba(255,255,255,0.09)", marginTop: "6px", paddingTop: "10px", display: "flex", justifyContent: "space-between", fontSize: "14px", fontWeight: 700, color: "#f4f4f5" }}>
                   <span>Total</span>
                   <span>{fmtGbp(grandTotal)}</span>
                 </div>
@@ -773,30 +749,49 @@ export default function QuoteServicesPublicView() {
 
           {/* ── Notes ── */}
           <div style={{ ...card, padding: "24px 28px" }}>
-            <p style={{ fontWeight: 700, fontSize: "14px", marginBottom: "10px", marginTop: 0 }}>Notes</p>
-            <p style={{ color: "#6b7280", fontSize: "13px", lineHeight: 1.6, marginBottom: "6px", marginTop: 0 }}>
+            <p style={{ fontWeight: 700, fontSize: "14px", marginBottom: "10px", marginTop: 0, color: "#f4f4f5" }}>Notes</p>
+            <p style={{ color: "#71717a", fontSize: "13px", lineHeight: 1.6, marginBottom: "6px", marginTop: 0 }}>
               Where applicable, a full works certificate will be issued once the invoice has been paid in full.
             </p>
-            <p style={{ color: "#6b7280", fontSize: "13px", lineHeight: 1.6, margin: 0 }}>
+            <p style={{ color: "#71717a", fontSize: "13px", lineHeight: 1.6, margin: 0 }}>
               Where applicable, we will require a deposit of 50% of the quotation value, once the quotation has been accepted.
             </p>
           </div>
+
+          {/* ── Customer request submitted thank you ── */}
+          {amendResult === "draft" && (
+            <div style={{
+              ...card,
+              padding: "28px 32px",
+              background: "rgba(251,191,36,0.08)",
+              borderColor: "#fbbf24",
+              textAlign: "center",
+            }}>
+              <p style={{ fontSize: "32px", margin: "0 0 10px" }}>📋</p>
+              <p style={{ fontWeight: 700, fontSize: "18px", margin: "0 0 10px", color: "#fbbf24" }}>
+                Thank you for your request!
+              </p>
+              <p style={{ fontSize: "14px", color: "#a1a1aa", lineHeight: 1.6, margin: 0 }}>
+                We have received your service request and will review it. Once reviewed, we will send you a revised quote for your approval.
+              </p>
+            </div>
+          )}
 
           {/* ── Already resolved banner ── */}
           {isResolved && !submitted && (
             <div style={{
               ...card,
               padding: "24px 28px",
-              background: quote.status === "Accepted" ? "#f0fdf4" : "#fef2f2",
-              borderColor: quote.status === "Accepted" ? "#bbf7d0" : "#fecaca",
+              background: quote.status === "Accepted" ? "rgba(52,211,153,0.08)" : "rgba(248,113,113,0.08)",
+              borderColor: quote.status === "Accepted" ? "#34d399" : "#f87171",
             }}>
               <p style={{
                 fontWeight: 700, fontSize: "15px", margin: "0 0 6px",
-                color: quote.status === "Accepted" ? "#15803d" : "#b91c1c",
+                color: quote.status === "Accepted" ? "#34d399" : "#f87171",
               }}>
                 {quote.status === "Accepted" ? "Quote accepted" : "Quote declined"}
               </p>
-              <p style={{ color: quote.status === "Accepted" ? "#166534" : "#991b1b", fontSize: "13px", margin: 0 }}>
+              <p style={{ color: "#a1a1aa", fontSize: "13px", margin: 0 }}>
                 {quote.status === "Accepted"
                   ? "You have already accepted this quote. We will be in touch shortly."
                   : "You have already declined this quote. Please contact us if you've changed your mind."}
@@ -807,19 +802,27 @@ export default function QuoteServicesPublicView() {
           {/* ── Accept / Decline section ── */}
           {isSent && !submitted && (
             <div style={{ ...card, padding: "28px 32px" }}>
-              <p style={{ fontWeight: 700, fontSize: "16px", margin: "0 0 16px" }}>Respond to this quote</p>
+              <p style={{ fontWeight: 700, fontSize: "16px", margin: "0 0 16px", color: "#f4f4f5" }}>Respond to this quote</p>
+
+              {/* Amend result banner */}
+              {amendResult === "updated" && (
+                <div style={{ marginBottom: "20px", padding: "14px 16px", background: "rgba(56,189,248,0.08)", border: "1px solid rgba(56,189,248,0.3)", borderRadius: "6px" }}>
+                  <p style={{ margin: "0 0 3px", fontWeight: 700, fontSize: "14px", color: "#38bdf8" }}>Quote updated</p>
+                  <p style={{ margin: 0, fontSize: "13px", color: "#a1a1aa" }}>Your services have been updated. You can now review the quote and accept or decline below.</p>
+                </div>
+              )}
 
               {/* Toggle buttons */}
               <div style={{ display: "flex", gap: "12px", marginBottom: action ? "24px" : "0" }}>
                 <button
                   onClick={() => switchAction("accept")}
                   style={{
-                    flex: 1, padding: "12px 20px", borderRadius: "10px",
+                    flex: 1, padding: "12px 20px", borderRadius: "8px",
                     fontWeight: 700, fontSize: "14px", cursor: "pointer",
                     border: "2px solid", transition: "all 0.15s",
-                    background: action === "accept" ? "#f0fdf4" : "#fff",
-                    borderColor: action === "accept" ? "#22c55e" : "#e5e7eb",
-                    color: action === "accept" ? "#15803d" : "#374151",
+                    background: action === "accept" ? "rgba(52,211,153,0.1)" : "#111e33",
+                    borderColor: action === "accept" ? "#34d399" : "rgba(255,255,255,0.09)",
+                    color: action === "accept" ? "#34d399" : "#a1a1aa",
                   }}
                 >
                   ✓ Accept Quote
@@ -827,26 +830,40 @@ export default function QuoteServicesPublicView() {
                 <button
                   onClick={() => switchAction("decline")}
                   style={{
-                    flex: 1, padding: "12px 20px", borderRadius: "10px",
+                    flex: 1, padding: "12px 20px", borderRadius: "8px",
                     fontWeight: 700, fontSize: "14px", cursor: "pointer",
                     border: "2px solid", transition: "all 0.15s",
-                    background: action === "decline" ? "#fef2f2" : "#fff",
-                    borderColor: action === "decline" ? "#ef4444" : "#e5e7eb",
-                    color: action === "decline" ? "#b91c1c" : "#374151",
+                    background: action === "decline" ? "rgba(248,113,113,0.1)" : "#111e33",
+                    borderColor: action === "decline" ? "#f87171" : "rgba(255,255,255,0.09)",
+                    color: action === "decline" ? "#f87171" : "#a1a1aa",
                   }}
                 >
                   ✕ Decline Quote
                 </button>
+                {amendResult !== "draft" && (
+                  <button
+                    onClick={() => switchAction("amend")}
+                    style={{
+                      flex: 1, padding: "12px 20px", borderRadius: "8px",
+                      fontWeight: 700, fontSize: "14px", cursor: "pointer",
+                      border: "2px solid", transition: "all 0.15s",
+                      background: action === "amend" ? "rgba(251,191,36,0.1)" : "#111e33",
+                      borderColor: action === "amend" ? "#fbbf24" : "rgba(255,255,255,0.09)",
+                      color: action === "amend" ? "#fbbf24" : "#a1a1aa",
+                    }}
+                  >
+                    ✎ Amend Quote
+                  </button>
+                )}
               </div>
 
               {/* ── Accept form ── */}
               {action === "accept" && (
                 <>
-                  {/* Special requests */}
                   <div style={{ marginBottom: "22px" }}>
-                    <label style={{ display: "block", fontWeight: 600, fontSize: "14px", marginBottom: "8px" }}>
+                    <label style={{ display: "block", fontWeight: 600, fontSize: "14px", marginBottom: "8px", color: "#f4f4f5" }}>
                       Special requests{" "}
-                      <span style={{ color: "#9ca3af", fontWeight: 400 }}>(optional)</span>
+                      <span style={{ color: "#71717a", fontWeight: 400 }}>(optional)</span>
                     </label>
                     <textarea
                       value={acceptNotes}
@@ -857,28 +874,26 @@ export default function QuoteServicesPublicView() {
                     />
                   </div>
 
-                  {/* Availability table */}
                   <div style={{ marginBottom: "22px" }}>
-                    <label style={{ display: "block", fontWeight: 600, fontSize: "14px", marginBottom: "10px" }}>
+                    <label style={{ display: "block", fontWeight: 600, fontSize: "14px", marginBottom: "10px", color: "#f4f4f5" }}>
                       Preferred dates & times{" "}
-                      <span style={{ color: "#9ca3af", fontWeight: 400 }}>(optional)</span>
+                      <span style={{ color: "#71717a", fontWeight: 400 }}>(optional)</span>
                     </label>
 
                     {timeslots.map(slot => {
                       const err = slotHasError(slot);
-                      // Green when both hours are filled and the range is valid
                       const timeValid = !err && !!(slot.fromH && slot.toH) &&
                         (!slot.rangeEnabled || !!(slot.date && slot.endDate));
-                      const sepStyle = { color: "#9ca3af", fontSize: "14px", flexShrink: 0 };
-                      const labelStyle = { fontSize: "12px", color: "#6b7280", fontWeight: 600, flexShrink: 0 };
+                      const sepStyle = { color: "#52525b", fontSize: "14px", flexShrink: 0 };
+                      const labelStyle = { fontSize: "12px", color: "#71717a", fontWeight: 600, flexShrink: 0 };
                       const rmBtn = (
                         <button
                           onClick={() => removeSlot(slot.id)}
                           disabled={timeslots.length === 1}
                           style={{
-                            width: "32px", height: "32px", borderRadius: "8px", flexShrink: 0,
-                            border: "1px solid #fee2e2", background: "#fef2f2",
-                            color: "#ef4444", cursor: timeslots.length === 1 ? "not-allowed" : "pointer",
+                            width: "32px", height: "32px", borderRadius: "6px", flexShrink: 0,
+                            border: "1px solid rgba(248,113,113,0.3)", background: "rgba(248,113,113,0.1)",
+                            color: "#f87171", cursor: timeslots.length === 1 ? "not-allowed" : "pointer",
                             opacity: timeslots.length === 1 ? 0.4 : 1, fontSize: "14px",
                             display: "flex", alignItems: "center", justifyContent: "center",
                           }}
@@ -889,9 +904,7 @@ export default function QuoteServicesPublicView() {
                         <div key={slot.id} style={{ marginBottom: "12px" }}>
 
                           {slot.rangeEnabled ? (
-                            /* ── Date range mode ── */
                             <>
-                              {/* From row */}
                               <div style={{ display: "flex", gap: "6px", alignItems: "center", marginBottom: "6px" }}>
                                 <span style={{ ...labelStyle, width: "32px" }}>From</span>
                                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -905,7 +918,6 @@ export default function QuoteServicesPublicView() {
                                 <MinuteInput value={slot.fromM} onChange={m => updateSlot(slot.id, "fromM", m)} invalid={err} valid={timeValid} />
                                 {rmBtn}
                               </div>
-                              {/* To row */}
                               <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
                                 <span style={{ ...labelStyle, width: "32px" }}>Until</span>
                                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -921,7 +933,6 @@ export default function QuoteServicesPublicView() {
                               </div>
                             </>
                           ) : (
-                            /* ── Single-date mode ── */
                             <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
                               <div style={{ flex: 1, minWidth: 0 }}>
                                 <DatePicker selected={slot.date} onChange={d => updateSlot(slot.id, "date", d)}
@@ -941,17 +952,16 @@ export default function QuoteServicesPublicView() {
                             </div>
                           )}
 
-                          {/* Checkbox row */}
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "5px" }}>
                             <label style={{ display: "flex", alignItems: "center", gap: "5px", cursor: "pointer", userSelect: "none" }}>
                               <input type="checkbox" checked={slot.rangeEnabled} onChange={() => toggleRange(slot.id)}
-                                style={{ cursor: "pointer", accentColor: "#0369a1" }} />
-                              <span style={{ fontSize: "12px", color: "#6b7280" }}>Date Range</span>
+                                style={{ cursor: "pointer", accentColor: "#38bdf8" }} />
+                              <span style={{ fontSize: "12px", color: "#71717a" }}>Date Range</span>
                             </label>
                           </div>
 
                           {err && (
-                            <p style={{ fontSize: "11px", color: "#ef4444", margin: "3px 0 0" }}>
+                            <p style={{ fontSize: "11px", color: "#f87171", margin: "3px 0 0" }}>
                               {slot.rangeEnabled ? "Start must be before end date/time" : "Start time must be before end time"}
                             </p>
                           )}
@@ -963,9 +973,9 @@ export default function QuoteServicesPublicView() {
                       <button
                         onClick={addSlot}
                         style={{
-                          padding: "6px 14px", borderRadius: "8px",
-                          border: "1px solid #e5e7eb", background: "#f9fafb",
-                          fontSize: "13px", cursor: "pointer", color: "#374151",
+                          padding: "6px 14px", borderRadius: "6px",
+                          border: "1px solid rgba(255,255,255,0.09)", background: "#111e33",
+                          fontSize: "13px", cursor: "pointer", color: "#a1a1aa",
                         }}
                       >
                         + Add Date
@@ -973,9 +983,9 @@ export default function QuoteServicesPublicView() {
                       <button
                         onClick={openMultiModal}
                         style={{
-                          padding: "6px 14px", borderRadius: "8px",
-                          border: "1px solid #bfdbfe", background: "#eff6ff",
-                          fontSize: "13px", cursor: "pointer", color: "#1d4ed8",
+                          padding: "6px 14px", borderRadius: "6px",
+                          border: "1px solid rgba(56,189,248,0.3)", background: "rgba(56,189,248,0.08)",
+                          fontSize: "13px", cursor: "pointer", color: "#38bdf8",
                         }}
                       >
                         + Add Multiple Dates
@@ -984,11 +994,11 @@ export default function QuoteServicesPublicView() {
                   </div>
 
                   {submitError && (
-                    <p style={{ color: "#ef4444", fontSize: "13px", marginBottom: "12px" }}>{submitError}</p>
+                    <p style={{ color: "#f87171", fontSize: "13px", marginBottom: "12px" }}>{submitError}</p>
                   )}
 
                   {hasAnyError && (
-                    <p style={{ color: "#ef4444", fontSize: "13px", marginBottom: "12px", textAlign: "center" }}>
+                    <p style={{ color: "#f87171", fontSize: "13px", marginBottom: "12px", textAlign: "center" }}>
                       Please fix the date/time errors above before confirming.
                     </p>
                   )}
@@ -998,8 +1008,8 @@ export default function QuoteServicesPublicView() {
                       onClick={handleConfirm}
                       disabled={submitting}
                       style={{
-                        width: "100%", padding: "14px", borderRadius: "10px",
-                        background: submitting ? "#86efac" : "#22c55e",
+                        width: "100%", padding: "14px", borderRadius: "8px",
+                        background: submitting ? "rgba(52,211,153,0.5)" : "#22c55e",
                         color: "#fff", fontWeight: 700, fontSize: "15px",
                         border: "none", cursor: submitting ? "not-allowed" : "pointer",
                       }}
@@ -1010,13 +1020,30 @@ export default function QuoteServicesPublicView() {
                 </>
               )}
 
+              {/* ── Amend form (inline) ── */}
+              {action === "amend" && (
+                <div style={{ marginTop: "24px" }}>
+                  <CustomerQuoteServiceLinkPublicView
+                    publicToken={publicToken}
+                    initialServices={(data?.services || []).filter(sv => sv.title !== "Callout Charge")}
+                    inline={true}
+                    onClose={() => switchAction(null)}
+                    onSaved={async (hasCustom) => {
+                      switchAction(null);
+                      setAmendResult(hasCustom ? "draft" : "updated");
+                      await loadQuote();
+                    }}
+                  />
+                </div>
+              )}
+
               {/* ── Decline form ── */}
               {action === "decline" && (
                 <>
                   <div style={{ marginBottom: "22px" }}>
-                    <label style={{ display: "block", fontWeight: 600, fontSize: "14px", marginBottom: "8px" }}>
+                    <label style={{ display: "block", fontWeight: 600, fontSize: "14px", marginBottom: "8px", color: "#f4f4f5" }}>
                       Would you like to share a reason?{" "}
-                      <span style={{ color: "#9ca3af", fontWeight: 400 }}>(optional)</span>
+                      <span style={{ color: "#71717a", fontWeight: 400 }}>(optional)</span>
                     </label>
                     <textarea
                       value={declineNotes}
@@ -1028,15 +1055,15 @@ export default function QuoteServicesPublicView() {
                   </div>
 
                   {submitError && (
-                    <p style={{ color: "#ef4444", fontSize: "13px", marginBottom: "12px" }}>{submitError}</p>
+                    <p style={{ color: "#f87171", fontSize: "13px", marginBottom: "12px" }}>{submitError}</p>
                   )}
 
                   <button
                     onClick={handleConfirm}
                     disabled={submitting}
                     style={{
-                      width: "100%", padding: "14px", borderRadius: "10px",
-                      background: submitting ? "#fca5a5" : "#ef4444",
+                      width: "100%", padding: "14px", borderRadius: "8px",
+                      background: submitting ? "rgba(248,113,113,0.5)" : "#ef4444",
                       color: "#fff", fontWeight: 700, fontSize: "15px",
                       border: "none", cursor: submitting ? "not-allowed" : "pointer",
                     }}
@@ -1054,19 +1081,19 @@ export default function QuoteServicesPublicView() {
               ...card,
               padding: "32px",
               textAlign: "center",
-              background: action === "accept" ? "#f0fdf4" : "#fef2f2",
-              borderColor: action === "accept" ? "#bbf7d0" : "#fecaca",
+              background: action === "accept" ? "rgba(52,211,153,0.08)" : "rgba(248,113,113,0.08)",
+              borderColor: action === "accept" ? "#34d399" : "#f87171",
             }}>
               <p style={{ fontSize: "32px", margin: "0 0 8px" }}>
                 {action === "accept" ? "✓" : "✕"}
               </p>
               <p style={{
                 fontWeight: 700, fontSize: "18px", margin: "0 0 8px",
-                color: action === "accept" ? "#15803d" : "#b91c1c",
+                color: action === "accept" ? "#34d399" : "#f87171",
               }}>
                 {action === "accept" ? "Quote Accepted" : "Quote Declined"}
               </p>
-              <p style={{ fontSize: "14px", margin: 0, color: action === "accept" ? "#166534" : "#991b1b" }}>
+              <p style={{ fontSize: "14px", margin: 0, color: "#a1a1aa" }}>
                 {action === "accept"
                   ? "Thank you! We've received your acceptance and will be in touch shortly to arrange a convenient start date."
                   : "Thank you for your response. We've noted your decision. Please don't hesitate to contact us if you change your mind."}
@@ -1077,16 +1104,16 @@ export default function QuoteServicesPublicView() {
           {/* ── Contact footer ── */}
           {(business?.email || business?.phone) && (
             <div style={{ textAlign: "center", padding: "24px" }}>
-              <p style={{ color: "#6b7280", fontSize: "13px", marginBottom: "6px" }}>
+              <p style={{ color: "#71717a", fontSize: "13px", marginBottom: "6px" }}>
                 {isSent && !submitted
                   ? "You can also accept or discuss this quote by getting in touch:"
                   : "For any questions, please get in touch:"}
               </p>
-              <p style={{ fontWeight: 600, color: "#0369a1", fontSize: "14px" }}>
+              <p style={{ fontWeight: 600, color: "#38bdf8", fontSize: "14px" }}>
                 {[business.email, business.phone].filter(Boolean).join("  ·  ")}
               </p>
               {business.website && (
-                <p style={{ color: "#9ca3af", fontSize: "13px", marginTop: "4px" }}>{business.website}</p>
+                <p style={{ color: "#71717a", fontSize: "13px", marginTop: "4px" }}>{business.website}</p>
               )}
             </div>
           )}
@@ -1103,53 +1130,50 @@ export default function QuoteServicesPublicView() {
         const timeValid       = timeSet && (fMins < tMins || multiOvernight);
         const canSave         = multiDates.length > 0 && !timeErr;
         return (
-          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10000 }}>
-            <div style={{ background: "#fff", borderRadius: "16px", padding: "24px", width: "100%", maxWidth: "360px", boxShadow: "0 20px 60px rgba(0,0,0,0.2)", fontFamily: "system-ui, -apple-system, sans-serif" }}>
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10000 }}>
+            <div style={{ background: "#0e1729", border: "1px solid rgba(255,255,255,0.09)", borderRadius: "8px", padding: "24px", width: "100%", maxWidth: "360px", boxShadow: "0 20px 60px rgba(0,0,0,0.6)", fontFamily: "system-ui, -apple-system, sans-serif" }}>
 
-              <h3 style={{ margin: "0 0 16px", fontSize: "16px", fontWeight: 700, color: "#111827" }}>Add Multiple Dates</h3>
+              <h3 style={{ margin: "0 0 16px", fontSize: "16px", fontWeight: 700, color: "#f4f4f5" }}>Add Multiple Dates</h3>
 
               <MultiCalendar selectedDates={multiDates} onToggle={toggleMultiDate} />
 
-              <p style={{ margin: "10px 0 14px", fontSize: "13px", color: multiDates.length ? "#0369a1" : "#9ca3af", fontWeight: multiDates.length ? 600 : 400 }}>
+              <p style={{ margin: "10px 0 14px", fontSize: "13px", color: multiDates.length ? "#38bdf8" : "#52525b", fontWeight: multiDates.length ? 600 : 400 }}>
                 {multiDates.length === 0
                   ? "Click dates above to select them"
                   : `${multiDates.length} date${multiDates.length > 1 ? "s" : ""} selected`}
               </p>
 
-              {/* Time fields */}
               <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "12px", flexWrap: "wrap" }}>
-                <span style={{ fontSize: "13px", fontWeight: 600, color: "#374151" }}>From</span>
+                <span style={{ fontSize: "13px", fontWeight: 600, color: "#a1a1aa" }}>From</span>
                 <HourSelect value={multiFromH} onChange={h => { setMultiFromH(h); if (!multiFromM) setMultiFromM("00"); }} invalid={timeErr} valid={timeValid} />
-                <span style={{ color: "#9ca3af" }}>:</span>
+                <span style={{ color: "#52525b" }}>:</span>
                 <MinuteInput value={multiFromM} onChange={setMultiFromM} invalid={timeErr} valid={timeValid} />
-                <span style={{ fontSize: "13px", fontWeight: 600, color: "#374151", marginLeft: "4px" }}>Until</span>
+                <span style={{ fontSize: "13px", fontWeight: 600, color: "#a1a1aa", marginLeft: "4px" }}>Until</span>
                 <HourSelect value={multiToH} onChange={h => { setMultiToH(h); if (!multiToM) setMultiToM("00"); }} invalid={timeErr} valid={timeValid} />
-                <span style={{ color: "#9ca3af" }}>:</span>
+                <span style={{ color: "#52525b" }}>:</span>
                 <MinuteInput value={multiToM} onChange={setMultiToM} invalid={timeErr} valid={timeValid} />
               </div>
 
-              {/* Error + overnight checkbox */}
               {showOvernight && (
                 <div style={{ marginBottom: "14px" }}>
                   {timeErr && (
-                    <p style={{ color: "#ef4444", fontSize: "12px", margin: "0 0 8px" }}>Start time must be before end time.</p>
+                    <p style={{ color: "#f87171", fontSize: "12px", margin: "0 0 8px" }}>Start time must be before end time.</p>
                   )}
                   <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}>
                     <input type="checkbox" checked={multiOvernight} onChange={e => setMultiOvernight(e.target.checked)}
-                      style={{ cursor: "pointer", accentColor: "#0369a1", flexShrink: 0, width: "15px", height: "15px" }} />
-                    <span style={{ fontSize: "13px", color: "#374151" }}>Overnight work (end time is next day)</span>
+                      style={{ cursor: "pointer", accentColor: "#38bdf8", flexShrink: 0, width: "15px", height: "15px" }} />
+                    <span style={{ fontSize: "13px", color: "#a1a1aa" }}>Overnight work (end time is next day)</span>
                   </label>
                 </div>
               )}
 
-              {/* Buttons */}
               <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end", marginTop: "4px" }}>
                 <button onClick={() => setMultiOpen(false)}
-                  style={{ padding: "8px 18px", borderRadius: "8px", border: "1px solid #e5e7eb", background: "#fff", fontSize: "13px", cursor: "pointer", color: "#374151", fontWeight: 500 }}>
+                  style={{ padding: "8px 18px", borderRadius: "6px", border: "1px solid rgba(255,255,255,0.09)", background: "#111e33", fontSize: "13px", cursor: "pointer", color: "#a1a1aa", fontWeight: 500 }}>
                   Cancel
                 </button>
                 <button onClick={saveMultiDates} disabled={!canSave}
-                  style={{ padding: "8px 18px", borderRadius: "8px", border: "none", fontSize: "13px", cursor: canSave ? "pointer" : "not-allowed", fontWeight: 600, background: canSave ? "#0369a1" : "#e5e7eb", color: canSave ? "#fff" : "#9ca3af", transition: "background 0.15s" }}>
+                  style={{ padding: "8px 18px", borderRadius: "6px", border: "none", fontSize: "13px", cursor: canSave ? "pointer" : "not-allowed", fontWeight: 600, background: canSave ? "#0ea5e9" : "#111e33", color: canSave ? "#fff" : "#52525b", transition: "background 0.15s" }}>
                   Add {multiDates.length > 0 ? multiDates.length : ""} Date{multiDates.length !== 1 ? "s" : ""}
                 </button>
               </div>
@@ -1158,7 +1182,7 @@ export default function QuoteServicesPublicView() {
         );
       })()}
 
-      {/* Portal target for react-datepicker — renders outside the grid so it can't disrupt layout */}
+      {/* Portal target for react-datepicker */}
       <div id="datepicker-portal" />
     </>
   );

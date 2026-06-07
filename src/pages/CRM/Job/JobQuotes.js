@@ -35,7 +35,7 @@ export default function JobQuotes() {
   return (
     <div>
       <h2 className="text-2xl font-bold text-white mb-4">Quotes</h2>
-      <QuotesTable quotes={quotes} showCustomer={false} showJob={false} emptyMessage="No quotes for this job yet." />
+      <QuotesTable quotes={quotes} showCustomer={false} showJob={false} emptyMessage="No quotes for this job yet." defaultStatus="All" />
     </div>
   );
 }

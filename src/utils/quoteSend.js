@@ -19,7 +19,7 @@ export async function sendQuote({ quoteId, profile, updateStatus = false }) {
   // ── 1. Load quote ──────────────────────────────────────────────────────────
   const { data: quote, error: qe } = await supabase
     .from("quote")
-    .select("quote_id, quote_number, public_token, title, description, status, created_at")
+    .select("quote_id, quote_number, public_token, title, description, callout_charge, status, created_at, sent_at")
     .eq("quote_id", quoteId)
     .single();
   if (qe) throw new Error("Failed to load quote: " + qe.message);
@@ -86,13 +86,15 @@ export async function sendQuote({ quoteId, profile, updateStatus = false }) {
   const hourlyRate = pricing?.hourly_rate ?? 0;
 
   // ── 5. Generate PDF blob ───────────────────────────────────────────────────
+  const nowIso = new Date().toISOString();
   const element = createElement(QuotePdf, {
-    quote,
+    quote: { ...quote, sent_at: nowIso },
     services,
     customer,
     job,
     business,
     hourlyRate,
+    calloutCharge: parseFloat(quote.callout_charge) || 0,
   });
   const blob = await pdf(element).toBlob();
 
@@ -110,10 +112,10 @@ export async function sendQuote({ quoteId, profile, updateStatus = false }) {
     .getPublicUrl(filePath);
   const pdfUrl = urlData.publicUrl;
 
-  // ── 7. Optionally update quote status ─────────────────────────────────────
-  if (updateStatus) {
-    await supabase.from("quote").update({ status: "Sent" }).eq("quote_id", quoteId);
-  }
+  // ── 7. Update sent_at (always) and optionally status ─────────────────────
+  const quoteUpdate = { sent_at: nowIso };
+  if (updateStatus) quoteUpdate.status = "Sent";
+  await supabase.from("quote").update(quoteUpdate).eq("quote_id", quoteId);
 
   // ── 8. Record timeline entry ───────────────────────────────────────────────
   await supabase.from("quote_timeline").insert({

@@ -39,7 +39,7 @@ export default function CustomerQuotes() {
   return (
     <div>
       <h2 className="text-2xl font-bold text-white mb-4">Quotes</h2>
-      <QuotesTable quotes={quotes} showCustomer={false} showJob={true} emptyMessage="No quotes for this client yet." />
+      <QuotesTable quotes={quotes} showCustomer={false} showJob={true} emptyMessage="No quotes for this client yet." defaultStatus="All" />
     </div>
   );
 }

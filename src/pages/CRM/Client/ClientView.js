@@ -17,19 +17,19 @@ export default function CustomerView() {
   };
 
   return (
-    <div className="min-h-screen bg-black text-white p-6">
+    <div className="min-h-screen text-white p-6">
       <PageHeader title="Client" />
 
       <div className="flex gap-6">
-        <aside style={{ width: "10%" }} className="bg-zinc-900 rounded-2xl p-4 space-y-3">
+        <aside style={{ width: "10%" }} className="space-y-2">
           {["Client Details", "Jobs", "Quotes"].map(tab => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
-              className={`w-full text-left px-4 py-3 rounded-2xl transition ${
+              className={`w-full text-left px-4 py-3 rounded-lg transition ${
                 activeTab === tab
-                  ? "bg-sky-500 text-black"
-                  : "bg-zinc-800 hover:bg-zinc-700"
+                  ? "bg-sky-500 text-black font-semibold"
+                  : "bg-zinc-900 text-zinc-300 hover:bg-zinc-800 hover:text-white"
               }`}
             >
               {tab}
@@ -37,7 +37,7 @@ export default function CustomerView() {
           ))}
         </aside>
 
-        <section style={{ width: "90%" }} className="bg-zinc-900 rounded-2xl p-6">
+        <section style={{ width: "90%" }}>
           {renderContent()}
         </section>
       </div>

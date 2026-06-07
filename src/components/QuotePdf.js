@@ -31,12 +31,14 @@ const s = StyleSheet.create({
 const fmt = (d) =>
   new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
 
-export default function QuotePdf({ quote, services = [], customer, job, business, hourlyRate = 0 }) {
+export default function QuotePdf({ quote, services = [], customer, job, business, hourlyRate = 0, calloutCharge = 0 }) {
   const vatRegistered = business?.vat_registered || false;
   const hrRate        = parseFloat(hourlyRate) || 0;
   const fmtGbp        = (n) => `£${n.toFixed(2)}`;
 
-  const totalLabour = services.reduce((sum, sv) => {
+  const calloutDisplay = vatRegistered ? calloutCharge * 1.20 : calloutCharge;
+
+  const totalLabour = calloutDisplay + services.reduce((sum, sv) => {
     const svQty = parseInt(sv.quantity) || 1;
     const hours = parseFloat(sv.service?.hours) || 0;
     const labSub = hours * svQty * hrRate;
@@ -82,7 +84,7 @@ export default function QuotePdf({ quote, services = [], customer, job, business
           {/* Left — meta + customer address */}
           <View style={{ flex: 1 }}>
             <View style={s.row}><Text style={s.metaLabel}>Reference:</Text><Text style={s.metaVal}>{quote?.quote_number != null ? String(quote.quote_number).padStart(4, "0") : "—"}</Text></View>
-            <View style={s.row}><Text style={s.metaLabel}>Date:</Text>      <Text style={s.metaVal}>{fmt(quote?.created_at)}</Text></View>
+            <View style={s.row}><Text style={s.metaLabel}>Date:</Text>      <Text style={s.metaVal}>{fmt(quote?.sent_at || quote?.created_at)}</Text></View>
             <View style={s.row}><Text style={s.metaLabel}>Valid for:</Text> <Text style={s.metaVal}>30 days</Text></View>
 
             <View style={{ marginTop: 10 }}>
@@ -138,6 +140,28 @@ export default function QuotePdf({ quote, services = [], customer, job, business
         <View style={{ borderBottom: "1.5pt solid #d1d5db", marginBottom: 10 }} />
 
         <Text style={{ fontFamily: "Helvetica-Bold", fontSize: 10, color: BLUE, marginBottom: 4 }}>Services</Text>
+
+        {/* Callout Charge — always first */}
+        {calloutCharge > 0 && (
+          <View style={[s.tdRow, { flexDirection: "column", paddingVertical: 8 }]}>
+            <View style={[s.row, { justifyContent: "space-between", marginBottom: 3 }]}>
+              <Text style={{ fontFamily: "Helvetica-Bold", flex: 1 }}>Callout Charge</Text>
+            </View>
+            <View>
+              <Text style={{ fontSize: 8.5, fontFamily: "Helvetica-Bold", color: DARK }}>Pricing:</Text>
+              <View style={{ marginLeft: 8, marginTop: 2 }}>
+                <View style={[s.row, { justifyContent: "space-between", marginBottom: 2 }]}>
+                  <Text style={{ fontSize: 8, color: DARK }}>Callout Charge{vatRegistered ? " (inc. 20% VAT)" : ""}</Text>
+                  <Text style={{ fontSize: 8 }}>{fmtGbp(calloutDisplay)}</Text>
+                </View>
+                <View style={[s.row, { justifyContent: "space-between" }]}>
+                  <Text style={{ fontSize: 8.5, fontFamily: "Helvetica-Bold" }}>Total</Text>
+                  <Text style={{ fontSize: 8.5, fontFamily: "Helvetica-Bold" }}>{fmtGbp(calloutDisplay)}</Text>
+                </View>
+              </View>
+            </View>
+          </View>
+        )}
 
         {services.map((sv, i) => {
           const svQty     = parseInt(sv.quantity) || 1;

@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "../supabaseClient";
+import { sendQuote } from "../utils/quoteSend";
 import AddressLookup from "./AddressLookup";
 import ServiceQuoteLink from "../pages/CRM/Quote/ServiceQuoteLink";
 
@@ -16,15 +18,18 @@ const emptyForm = {
 };
 
 export default function AddJobModal({ isOpen, onClose, onSaved, profile, fixedCustomerId = null }) {
+  const navigate = useNavigate();
   const [form,             setForm]             = useState(emptyForm);
   const [customers,        setCustomers]        = useState([]);
   const [selectedServices, setSelectedServices] = useState([]);
   const [servicesModalOpen,setServicesModalOpen]= useState(false);
   const [addrView,         setAddrView]         = useState("lookup");
   const [saving,           setSaving]           = useState(false);
+  const [sending,          setSending]          = useState(false);
   const [formError,        setFormError]        = useState(null);
   const [customerSearch,   setCustomerSearch]   = useState("");
   const [customerDropOpen, setCustomerDropOpen] = useState(false);
+  const [sendStep,         setSendStep]         = useState(null); // { quoteId } when awaiting send decision
 
   // Reset form whenever modal opens
   useEffect(() => {
@@ -35,6 +40,7 @@ export default function AddJobModal({ isOpen, onClose, onSaved, profile, fixedCu
     setFormError(null);
     setCustomerSearch("");
     setCustomerDropOpen(false);
+    setSendStep(null);
   }, [isOpen]);
 
   // Load customer list (only when no fixed customer)
@@ -120,10 +126,21 @@ export default function AddJobModal({ isOpen, onClose, onSaved, profile, fixedCu
     const customerId = fixedCustomerId || form.customer_id;
     const { data: nextNum } = await supabase.rpc("get_next_quote_number", { p_customer_id: customerId });
 
+    // Snapshot callout_charge from basic_pricing at quote creation time
+    let calloutCharge = 0;
+    if (profile?.business_id) {
+      const { data: pricingRow } = await supabase
+        .from("basic_pricing")
+        .select("callout_charge")
+        .eq("business_id", profile.business_id)
+        .maybeSingle();
+      calloutCharge = parseFloat(pricingRow?.callout_charge) || 0;
+    }
+
     const quoteId = crypto.randomUUID();
     const { error: quoteErr } = await supabase
       .from("quote")
-      .insert({ quote_id: quoteId, title: form.title.trim(), description: form.description || null, status: "Draft", quote_number: nextNum || 1 });
+      .insert({ quote_id: quoteId, title: form.title.trim(), description: form.description || null, status: "Draft", quote_number: nextNum || 1, callout_charge: calloutCharge });
     if (quoteErr) { setSaving(false); setFormError(quoteErr.message || "Failed to create quote."); return; }
 
     await supabase.from("job_quote_link").insert({ job_id: job.job_id, quote_id: quoteId });
@@ -138,15 +155,146 @@ export default function AddJobModal({ isOpen, onClose, onSaved, profile, fixedCu
       });
     }
 
-    if (selectedServices.length) {
-      await supabase.from("quote_service_link").insert(
-        selectedServices.map(s => ({ quote_id: quoteId, service_id: s.serviceId, task: s.task || null }))
-      );
+    // Materialise service recipes — zero DB writes happen until this point
+    const defaultImg = "https://images.unsplash.com/photo-1581090464777-f3220bbe1b8b?q=80&w=1200&auto=format&fit=crop";
+    for (const s of selectedServices) {
+      let serviceId;
+
+      if (!s.sourceServiceId) {
+        // Typed from scratch — create a brand-new Custom service
+        const { data: svc, error: svcErr } = await supabase
+          .from("service")
+          .insert({
+            title:        s.name.trim(),
+            hours:        s.hours || 0,
+            business_id:  profile.business_id,
+            service_type: "Custom",
+            main_service: true,
+          })
+          .select("service_id")
+          .single();
+        if (svcErr) { setSaving(false); setFormError("Failed to create service: " + svcErr.message); return; }
+        serviceId = svc.service_id;
+      } else {
+        // Copy from Reusable template
+        const { data: src } = await supabase
+          .from("service")
+          .select("title, description, image_url, hours")
+          .eq("service_id", s.sourceServiceId)
+          .single();
+        const { data: copy, error: copyErr } = await supabase
+          .from("service")
+          .insert({
+            title:        s.name,
+            description:  src?.description  || null,
+            image_url:    src?.image_url    || defaultImg,
+            hours:        s.hours,
+            business_id:  profile.business_id,
+            service_type: "Custom",
+            main_service: true,
+          })
+          .select("service_id")
+          .single();
+        if (copyErr) { setSaving(false); setFormError("Failed to copy service: " + copyErr.message); return; }
+        serviceId = copy.service_id;
+
+        // Mirror template materials only when the user made no material changes
+        if (!s.materialsPending) {
+          const { data: mats } = await supabase
+            .from("material_service_link")
+            .select("material_id, quantity, sort_order")
+            .eq("service_id", s.sourceServiceId);
+          if (mats?.length) {
+            await supabase.from("material_service_link").insert(
+              mats.map(m => ({
+                service_id:  serviceId,
+                material_id: m.material_id,
+                business_id: profile.business_id,
+                quantity:    m.quantity,
+                sort_order:  m.sort_order ?? 0,
+              }))
+            );
+          }
+        }
+      }
+
+      // Apply user's material edits (if any)
+      if (s.materialsPending) {
+        const { materials = [], originalMaterials = [] } = s.materialsPending;
+        for (let mi = 0; mi < materials.length; mi++) {
+          const m = materials[mi];
+          if (!m.materialId && !m.name?.trim()) continue;
+          const o = originalMaterials[mi];
+          const isModified = !!o && !!m.materialId &&
+            (m.name !== o.name || m.basePrice !== o.basePrice || m.markup !== o.markup);
+          let materialId = m.materialId;
+          if (isModified || (!materialId && m.name?.trim())) {
+            const { data: nm } = await supabase
+              .from("material")
+              .insert([{
+                name:               m.name,
+                base_price_no_vat:  parseFloat(m.basePrice) || 0,
+                markup:             parseFloat(m.markup)    || 0,
+                image_url:          m.imageUrl || defaultImg,
+                business_id:        profile.business_id,
+              }])
+              .select()
+              .maybeSingle();
+            materialId = nm?.material_id;
+          }
+          if (materialId) {
+            await supabase.from("material_service_link").insert([{
+              material_id: materialId,
+              service_id:  serviceId,
+              business_id: profile.business_id,
+              quantity:    parseInt(m.quantity) || 1,
+              sort_order:  mi,
+            }]);
+          }
+        }
+      }
+
+      await supabase.from("quote_service_link").insert({
+        quote_id:  quoteId,
+        service_id: serviceId,
+        task:      s.task     || null,
+        quantity:  parseInt(s.quantity) || 1,
+      });
     }
 
     setSaving(false);
-    onClose();
+
+    if (!selectedServices.length) {
+      // No services — go straight to the quote view
+      if (onSaved) onSaved();
+      onClose();
+      navigate(`/crm/quotes/${quoteId}`);
+    } else {
+      // Services were added — ask whether to send now
+      setSendStep({ quoteId });
+    }
+  };
+
+  const handleSendYes = async () => {
+    if (!sendStep) return;
+    setSending(true);
+    try {
+      await sendQuote({ quoteId: sendStep.quoteId, profile, updateStatus: true });
+    } catch (e) {
+      // Non-fatal — quote is already saved; just navigate anyway
+      console.error("Send failed:", e);
+    }
+    setSending(false);
     if (onSaved) onSaved();
+    onClose();
+    navigate(`/crm/quotes/${sendStep.quoteId}`);
+  };
+
+  const handleSendNo = () => {
+    const id = sendStep.quoteId;
+    if (onSaved) onSaved();
+    onClose();
+    navigate(`/crm/quotes/${id}`);
   };
 
   const customerName = c => [c?.first_name, c?.last_name].filter(Boolean).join(" ") || "Unnamed";
@@ -195,7 +343,7 @@ export default function AddJobModal({ isOpen, onClose, onSaved, profile, fixedCu
                   <div style={{
                     position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0,
                     zIndex: 200, background: "#09090b", border: "1px solid #3f3f46",
-                    borderRadius: "12px", maxHeight: "200px", overflowY: "auto",
+                    borderRadius: "6px", maxHeight: "200px", overflowY: "auto",
                   }}>
                     {customers
                       .filter(c => customerName(c).toLowerCase().includes(customerSearch.toLowerCase()))
@@ -319,12 +467,36 @@ export default function AddJobModal({ isOpen, onClose, onSaved, profile, fixedCu
             {formError && <p className="text-red-400 text-sm">{formError}</p>}
           </div>
 
-          <div style={{ flexShrink: 0 }} className="px-6 py-4 border-t border-zinc-800 flex justify-end gap-3">
-            <button onClick={onClose} className="px-5 py-2 rounded-xl border border-zinc-600 text-white hover:bg-zinc-800 transition text-sm">Cancel</button>
-            <button onClick={save} disabled={saving} className="px-5 py-2 rounded-xl bg-sky-500 text-black font-semibold hover:bg-sky-400 transition text-sm disabled:opacity-50">
-              {saving ? "Saving…" : "Add Job"}
-            </button>
-          </div>
+          {sendStep ? (
+            <div style={{ flexShrink: 0 }} className="px-6 py-4 border-t border-zinc-800">
+              <p className="text-sm text-white font-medium mb-3">
+                Job saved. Would you like to send the quote to the customer now?
+              </p>
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={handleSendNo}
+                  disabled={sending}
+                  className="px-5 py-2 rounded-xl border border-zinc-600 text-white hover:bg-zinc-800 transition text-sm disabled:opacity-50"
+                >
+                  No, save as draft
+                </button>
+                <button
+                  onClick={handleSendYes}
+                  disabled={sending}
+                  className="px-5 py-2 rounded-xl bg-sky-500 text-black font-semibold hover:bg-sky-400 transition text-sm disabled:opacity-50"
+                >
+                  {sending ? "Sending…" : "Yes, send quote"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div style={{ flexShrink: 0 }} className="px-6 py-4 border-t border-zinc-800 flex justify-end gap-3">
+              <button onClick={onClose} className="px-5 py-2 rounded-xl border border-zinc-600 text-white hover:bg-zinc-800 transition text-sm">Cancel</button>
+              <button onClick={save} disabled={saving} className="px-5 py-2 rounded-xl bg-sky-500 text-black font-semibold hover:bg-sky-400 transition text-sm disabled:opacity-50">
+                {saving ? "Saving…" : "Add Job"}
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

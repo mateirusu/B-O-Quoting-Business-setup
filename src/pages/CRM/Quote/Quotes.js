@@ -1,11 +1,15 @@
 import { useEffect, useState } from "react";
+import { useAuth } from "../../../context/AuthContext";
 import { supabase } from "../../../supabaseClient";
 import QuotesTable from "../../../components/QuotesTable";
+import AddQuoteModal from "../../../components/AddQuoteModal";
 
 export default function Quotes() {
-  const [quotes,  setQuotes]  = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error,   setError]   = useState(null);
+  const { profile } = useAuth();
+  const [quotes,         setQuotes]         = useState([]);
+  const [loading,        setLoading]        = useState(true);
+  const [error,          setError]          = useState(null);
+  const [addQuoteOpen,   setAddQuoteOpen]   = useState(false);
 
   const loadQuotes = async () => {
     setLoading(true);
@@ -46,8 +50,22 @@ export default function Quotes() {
 
   return (
     <div>
-      <h2 className="text-2xl font-bold text-white mb-4">Quotes</h2>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-2xl font-bold text-white">Quotes</h2>
+        <button
+          onClick={() => setAddQuoteOpen(true)}
+          className="px-4 py-2 rounded-xl bg-sky-500 text-black font-semibold hover:bg-sky-400 transition text-sm"
+        >
+          + Add Quote
+        </button>
+      </div>
       <QuotesTable quotes={quotes} showCustomer={true} showJob={true} emptyMessage="No quotes yet." />
+      <AddQuoteModal
+        isOpen={addQuoteOpen}
+        onClose={() => setAddQuoteOpen(false)}
+        onSaved={loadQuotes}
+        profile={profile}
+      />
     </div>
   );
 }

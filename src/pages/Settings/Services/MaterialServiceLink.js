@@ -9,6 +9,7 @@ export default function MaterialServiceLink({
   onSave,
   deferredMode = false,
   initialState = null,
+  readOnly = false,
 }) {
   const [linkedMaterials, setLinkedMaterials] = useState([]);
   const [allMaterials, setAllMaterials] = useState([]);
@@ -617,18 +618,18 @@ export default function MaterialServiceLink({
             <div className="mb-4">
               <table className="w-full text-sm table-fixed">
                 <colgroup>
-                  <col style={{ width: '28px' }} />
+                  {!readOnly && <col style={{ width: '28px' }} />}
                   <col style={{ width: '56px' }} />
                   <col />
                   <col style={{ width: '125px' }} />
                   <col style={{ width: '96px' }} />
                   <col style={{ width: '88px' }} />
                   <col style={{ width: '72px' }} />
-                  <col style={{ width: '80px' }} />
+                  {!readOnly && <col style={{ width: '80px' }} />}
                 </colgroup>
                 <thead className="bg-zinc-800 sticky top-0">
                   <tr>
-                    <th className="p-3"></th>
+                    {!readOnly && <th className="p-3"></th>}
                     <th className="p-3 text-left text-xs font-bold text-zinc-400 uppercase">
                       Image
                     </th>
@@ -647,9 +648,11 @@ export default function MaterialServiceLink({
                     <th className="p-3 text-left text-xs font-bold text-zinc-400 uppercase">
                       Price(£)
                     </th>
-                    <th className="p-3 text-center text-xs font-bold text-zinc-400 uppercase">
-                      Actions
-                    </th>
+                    {!readOnly && (
+                      <th className="p-3 text-center text-xs font-bold text-zinc-400 uppercase">
+                        Actions
+                      </th>
+                    )}
                   </tr>
                 </thead>
                 <tbody>
@@ -664,16 +667,20 @@ export default function MaterialServiceLink({
                     return (
                       <tr
                         key={index}
-                        draggable
-                        onDragStart={(e) => handleDragStart(e, index)}
-                        onDragOver={(e) => handleDragOver(e, index)}
-                        onDrop={(e) => handleDrop(e, index)}
-                        onDragEnd={handleDragEnd}
-                        className={`border-b border-zinc-800 transition-colors ${dragOverIndex === index && dragIndex !== index ? 'bg-sky-500/10 border-sky-500/40' : 'hover:bg-zinc-800/50'}`}
+                        {...(!readOnly && {
+                          draggable: true,
+                          onDragStart: (e) => handleDragStart(e, index),
+                          onDragOver: (e) => handleDragOver(e, index),
+                          onDrop: (e) => handleDrop(e, index),
+                          onDragEnd: handleDragEnd,
+                        })}
+                        className={`border-b border-zinc-800 transition-colors ${!readOnly && dragOverIndex === index && dragIndex !== index ? 'bg-sky-500/10 border-sky-500/40' : 'hover:bg-zinc-800/50'}`}
                       >
-                        <td className="p-2 text-center cursor-grab active:cursor-grabbing select-none text-zinc-500 hover:text-zinc-300">
-                          ⠿
-                        </td>
+                        {!readOnly && (
+                          <td className="p-2 text-center cursor-grab active:cursor-grabbing select-none text-zinc-500 hover:text-zinc-300">
+                            ⠿
+                          </td>
+                        )}
                         <td className="p-3">
                           <img
                             src={material.imageUrl || "https://images.unsplash.com/photo-1581090464777-f3220bbe1b8b?q=80&w=1200&auto=format&fit=crop"}
@@ -685,15 +692,17 @@ export default function MaterialServiceLink({
                           <input
                             type="text"
                             value={material.name}
-                            onChange={(e) => handleNameChange(index, e.target.value)}
-                            onFocus={() => {
+                            readOnly={readOnly}
+                            onChange={readOnly ? undefined : (e) => handleNameChange(index, e.target.value)}
+                            onFocus={readOnly ? undefined : () => {
                               setActiveDropdownIndex(index);
                               setDropdownSearchQuery(material.name);
                             }}
                             className="w-full p-1 rounded bg-zinc-950 border border-zinc-700 text-sm"
+                            style={readOnly ? { cursor: "default" } : undefined}
                             placeholder="Search or type..."
                           />
-                          {showDropdown && filteredMaterials.length > 0 && (
+                          {!readOnly && showDropdown && filteredMaterials.length > 0 && (
                             <div className="absolute z-50 w-full mt-1 bg-zinc-800 border border-zinc-700 rounded-xl max-h-48 overflow-y-auto">
                               {filteredMaterials.map((m) => (
                                 <div
@@ -711,11 +720,13 @@ export default function MaterialServiceLink({
                           <input
                             type="text"
                             value={material.basePrice}
-                            onChange={(e) => {
+                            readOnly={readOnly}
+                            onChange={readOnly ? undefined : (e) => {
                               const val = e.target.value.replace(/[^0-9.]/g, "");
                               handleRowChange(index, "basePrice", val);
                             }}
                             className="w-full p-1 rounded bg-zinc-950 border border-zinc-700 text-sm"
+                            style={readOnly ? { cursor: "default" } : undefined}
                             placeholder="0.00"
                           />
                         </td>
@@ -723,11 +734,13 @@ export default function MaterialServiceLink({
                           <input
                             type="text"
                             value={material.markup}
-                            onChange={(e) => {
+                            readOnly={readOnly}
+                            onChange={readOnly ? undefined : (e) => {
                               const val = e.target.value.replace(/[^0-9.]/g, "");
                               handleRowChange(index, "markup", val);
                             }}
                             className="w-full p-1 rounded bg-zinc-950 border border-zinc-700 text-sm"
+                            style={readOnly ? { cursor: "default" } : undefined}
                             placeholder="0"
                           />
                         </td>
@@ -735,11 +748,13 @@ export default function MaterialServiceLink({
                           <input
                             type="text"
                             value={material.quantity}
-                            onChange={(e) => {
+                            readOnly={readOnly}
+                            onChange={readOnly ? undefined : (e) => {
                               const val = e.target.value.replace(/[^0-9]/g, "");
                               handleRowChange(index, "quantity", val);
                             }}
                             className="w-full p-1 rounded bg-zinc-950 border border-zinc-700 text-sm"
+                            style={readOnly ? { cursor: "default" } : undefined}
                             placeholder="0"
                           />
                         </td>
@@ -751,28 +766,29 @@ export default function MaterialServiceLink({
                             (parseInt(material.quantity) || 1)
                           ).toFixed(2)}
                         </td>
-                        <td className="p-3">
-                          <div className="flex items-center justify-center gap-2">
-                            {/* Show Update button only if material has changes and is not new */}
-                            {hasChanges && !isNewMaterial && (
+                        {!readOnly && (
+                          <td className="p-3">
+                            <div className="flex items-center justify-center gap-2">
+                              {hasChanges && !isNewMaterial && (
+                                <button
+                                  onClick={() => updateMaterial(index)}
+                                  disabled={saving}
+                                  className="px-2 py-1 text-xs bg-sky-500 text-black rounded font-bold hover:bg-sky-400 disabled:opacity-50"
+                                >
+                                  Update
+                                </button>
+                              )}
                               <button
-                                onClick={() => updateMaterial(index)}
+                                onClick={() => removeMaterial(index)}
                                 disabled={saving}
-                                className="px-2 py-1 text-xs bg-sky-500 text-black rounded font-bold hover:bg-sky-400 disabled:opacity-50"
+                                className="w-6 h-6 flex items-center justify-center bg-red-500/20 text-red-400 rounded hover:bg-red-500/30 disabled:opacity-50"
+                                title="Remove"
                               >
-                                Update
+                                ✕
                               </button>
-                            )}
-                            <button
-                              onClick={() => removeMaterial(index)}
-                              disabled={saving}
-                              className="w-6 h-6 flex items-center justify-center bg-red-500/20 text-red-400 rounded hover:bg-red-500/30 disabled:opacity-50"
-                              title="Remove"
-                            >
-                              ✕
-                            </button>
-                          </div>
-                        </td>
+                            </div>
+                          </td>
+                        )}
                       </tr>
                     );
                   })}
@@ -781,14 +797,16 @@ export default function MaterialServiceLink({
             </div>
 
             {/* Add Button */}
-            <div className="mb-4">
-              <button
-                onClick={addEmptyRow}
-                className="px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-xl hover:bg-zinc-700 text-sm text-left"
-              >
-                + Add Material
-              </button>
-            </div>
+            {!readOnly && (
+              <div className="mb-4">
+                <button
+                  onClick={addEmptyRow}
+                  className="px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-xl hover:bg-zinc-700 text-sm text-left"
+                >
+                  + Add Material
+                </button>
+              </div>
+            )}
 
             {/* Summary */}
             {linkedMaterials.length > 0 && (
@@ -821,26 +839,37 @@ export default function MaterialServiceLink({
 
         {/* Sticky footer */}
         <div className="flex justify-end gap-3 px-5 py-4 border-t border-zinc-800" style={{ flexShrink: 0 }}>
-          <button
-            onClick={onClose}
-            disabled={saving}
-            className="px-4 py-2 text-sm border border-zinc-600 rounded-xl hover:bg-zinc-800 disabled:opacity-50"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={() => {
-              if (!deferredMode && hasModifiedExistingMaterials()) {
-                setShowSaveDialog(true);
-              } else {
-                saveChanges('update');
-              }
-            }}
-            disabled={saving}
-            className="px-4 py-2 text-sm bg-sky-400 text-black rounded-xl font-bold hover:bg-sky-300 disabled:opacity-50"
-          >
-            {saving ? "Saving..." : "Save"}
-          </button>
+          {readOnly ? (
+            <button
+              onClick={onClose}
+              className="px-4 py-2 text-sm border border-zinc-600 rounded-xl hover:bg-zinc-800"
+            >
+              Close
+            </button>
+          ) : (
+            <>
+              <button
+                onClick={onClose}
+                disabled={saving}
+                className="px-4 py-2 text-sm border border-zinc-600 rounded-xl hover:bg-zinc-800 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  if (!deferredMode && hasModifiedExistingMaterials()) {
+                    setShowSaveDialog(true);
+                  } else {
+                    saveChanges('update');
+                  }
+                }}
+                disabled={saving}
+                className="px-4 py-2 text-sm bg-sky-400 text-black rounded-xl font-bold hover:bg-sky-300 disabled:opacity-50"
+              >
+                {saving ? "Saving..." : "Save"}
+              </button>
+            </>
+          )}
         </div>
       </div>
 

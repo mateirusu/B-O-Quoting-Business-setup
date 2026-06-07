@@ -28,12 +28,12 @@ export default function ServiceQuoteLink({
   const [activeDropdown, setActiveDropdown]     = useState(null);
   const [dropdownSearch, setDropdownSearch]     = useState("");
   const [pendingDeletes, setPendingDeletes]     = useState([]);
-  const [showSaveDialog, setShowSaveDialog]     = useState(false);
 
   const [dragIndex, setDragIndex]               = useState(null);
   const [dragOverIndex, setDragOverIndex]       = useState(null);
 
   const [materialsEditIndex, setMaterialsEditIndex] = useState(null);
+  const [hourlyRate, setHourlyRate] = useState(0);
 
   const linkedRef = useRef(linkedServices);
   useEffect(() => { linkedRef.current = linkedServices; }, [linkedServices]);
@@ -41,14 +41,12 @@ export default function ServiceQuoteLink({
   // ── Fetch all services for this business ───────────────────────────────────
   const fetchAllServices = useCallback(async () => {
     if (!profile?.business_id) return;
-    const { data } = await supabase
-      .from("service")
-      .select("service_id, title, description, hours")
-      .eq("business_id", profile.business_id)
-      .eq("main_service", true)
-      .eq("service_type", "Reusable")
-      .order("title");
-    setAllServices(data ?? []);
+    const [{ data: svcs }, { data: pricing }] = await Promise.all([
+      supabase.from("service").select("service_id, title, description, hours").eq("business_id", profile.business_id).eq("main_service", true).eq("service_type", "Reusable").order("title"),
+      supabase.from("basic_pricing").select("hourly_rate").eq("business_id", profile.business_id).maybeSingle(),
+    ]);
+    setAllServices(svcs ?? []);
+    setHourlyRate(parseFloat(pricing?.hourly_rate) || 0);
   }, [profile?.business_id]);
 
   // ── Fetch linked services (DB mode) ────────────────────────────────────────
@@ -57,7 +55,7 @@ export default function ServiceQuoteLink({
     setLoading(true);
     const { data, error } = await supabase
       .from("quote_service_link")
-      .select("quote_service_link_id, service_id, task, quantity, service:service_id(title, description)")
+      .select("quote_service_link_id, service_id, task, quantity, service:service_id(title, description, service_type, hours)")
       .eq("quote_id", quoteId)
       .order("created_at");
     if (error) { setError("Failed to load services."); setLoading(false); return; }
@@ -67,6 +65,8 @@ export default function ServiceQuoteLink({
       name:            r.service?.title || "",
       task:            r.task || "",
       quantity:        String(r.quantity ?? 1),
+      serviceType:     r.service?.service_type || "Reusable",
+      hours:           parseFloat(r.service?.hours) || 0,
       materialsPending: null,
     }));
     setLinkedServices(rows);
@@ -78,13 +78,19 @@ export default function ServiceQuoteLink({
     if (!isOpen) return;
     setPendingDeletes([]);
     setError(null);
-    setShowSaveDialog(false);
     fetchAllServices();
     if (quoteId) {
       fetchLinkedServices();
     } else {
       const rows = initialServices.map(s => ({
-        linkId: null, serviceId: s.serviceId, name: s.name, task: s.task || "", quantity: String(s.quantity ?? 1), materialsPending: null,
+        linkId:          null,
+        serviceId:       s.sourceServiceId || s.serviceId || null,
+        name:            s.name,
+        task:            s.task || "",
+        quantity:        String(s.quantity ?? 1),
+        serviceType:     s.serviceType || "Custom",
+        hours:           parseFloat(s.hours) || 0,
+        materialsPending: s.materialsPending || null,
       }));
       setLinkedServices(rows);
       setOriginalServices(rows.map(r => ({ ...r })));
@@ -134,12 +140,30 @@ export default function ServiceQuoteLink({
     if (!originalServices[index]) return false;
     const row = linkedServices[index];
     if (row?.name !== originalServices[index].name) return true;
+    if (parseFloat(row?.hours) !== parseFloat(originalServices[index].hours)) return true;
     if (hasMaterialChanges(row?.materialsPending)) return true;
     return false;
   };
 
+  const isHoursModified = index => {
+    if (!originalServices[index]) return false;
+    return parseFloat(linkedServices[index]?.hours) !== parseFloat(originalServices[index].hours);
+  };
+
   const hasModifiedExistingServices = () =>
-    linkedServices.some((s, i) => s.serviceId && isServiceModified(i));
+    linkedServices.some((s, i) => s.serviceId && s.serviceType === "Reusable" && isServiceModified(i));
+
+  const isTypeChanged = index => {
+    if (!originalServices[index]) return false;
+    return linkedServices[index]?.serviceType !== originalServices[index].serviceType;
+  };
+
+  const svcTypeRowStyle = t => {
+    if (t === "Customer Request") return { background: "rgba(245,158,11,0.18)" };
+    if (t === "Custom")           return { background: "rgba(56,189,248,0.15)" };
+    if (t === "Reusable")         return { background: "rgba(52,211,153,0.10)" };
+    return {};
+  };
 
   // ── Row helpers ────────────────────────────────────────────────────────────
   const handleRowChange = (index, field, value) =>
@@ -153,22 +177,34 @@ export default function ServiceQuoteLink({
 
   const selectService = (index, svc) => {
     setLinkedServices(prev => prev.map((r, i) =>
-      i === index ? { ...r, serviceId: svc.service_id, name: svc.title, task: r.task || svc.description || "" } : r
+      i === index ? {
+        ...r,
+        serviceId:       svc.service_id,
+        name:            svc.title,
+        task:            svc.description || "",
+        hours:           parseFloat(svc.hours) || 0,
+        quantity:        "1",
+        materialsPending: null,
+      } : r
     ));
     if (!originalServices[index]) {
       const updated = [...originalServices];
       while (updated.length <= index) updated.push(null);
       const row = linkedServices[index];
-      updated[index] = { ...row, serviceId: svc.service_id, name: svc.title };
+      updated[index] = { ...row, serviceId: svc.service_id, name: svc.title, hours: svc.hours ?? 0 };
       setOriginalServices(updated);
     }
     setActiveDropdown(null); setDropdownSearch("");
   };
 
   const availableServices = (search, currentIndex) => {
-    const usedIds = linkedServices.filter((_, i) => i !== currentIndex && _.serviceId).map(s => s.serviceId);
+    const usedNames = new Set(
+      linkedServices
+        .filter((_, i) => i !== currentIndex && _.name.trim())
+        .map(s => s.name.trim().toLowerCase())
+    );
     return allServices
-      .filter(s => !usedIds.includes(s.service_id) && s.title.toLowerCase().includes((search || "").toLowerCase()))
+      .filter(s => !usedNames.has(s.title.toLowerCase()) && s.title.toLowerCase().includes((search || "").toLowerCase()))
       .slice(0, 8);
   };
 
@@ -177,7 +213,7 @@ export default function ServiceQuoteLink({
 
   const removeRow = index => {
     const row = linkedServices[index];
-    if (row.linkId) setPendingDeletes(prev => [...prev, row.linkId]);
+    if (row.linkId) setPendingDeletes(prev => [...prev, { linkId: row.linkId, serviceId: row.serviceId, serviceType: row.serviceType }]);
     setLinkedServices(prev => prev.filter((_, i) => i !== index));
     setOriginalServices(prev => prev.filter((_, i) => i !== index));
   };
@@ -213,12 +249,14 @@ export default function ServiceQuoteLink({
     if (!row.serviceId) return;
     setSaving(true); setError(null);
     try {
-      if (isNameModified(index)) {
-        const { data, error } = await supabase
-          .from("service").update({ title: row.name }).eq("service_id", row.serviceId).select("service_id, title").single();
+      if (isNameModified(index) || isHoursModified(index)) {
+        const updates = {};
+        if (isNameModified(index)) updates.title = row.name;
+        if (isHoursModified(index)) updates.hours = parseFloat(row.hours) || 0;
+        const { error } = await supabase.from("service").update(updates).eq("service_id", row.serviceId);
         if (error) throw new Error(error.message || "Failed to update service.");
-        setOriginalServices(prev => prev.map((s, i) => i === index ? { ...s, name: data.title } : s));
-        setAllServices(prev => prev.map(s => s.service_id === row.serviceId ? { ...s, title: data.title } : s));
+        setOriginalServices(prev => prev.map((s, i) => i === index ? { ...s, name: updates.title ?? s.name, hours: updates.hours ?? s.hours } : s));
+        if (updates.title) setAllServices(prev => prev.map(s => s.service_id === row.serviceId ? { ...s, title: updates.title } : s));
       }
       if (hasMaterialChanges(row.materialsPending)) {
         await saveMaterialsForRow(row.serviceId, row.materialsPending, "update");
@@ -231,14 +269,14 @@ export default function ServiceQuoteLink({
     }
   };
 
-  // ── Create a new Custom service in DB ─────────────────────────────────────
+  // ── Create a new Custom service in DB (from a typed name) ────────────────
   const createCustomService = async row => {
     const { data, error } = await supabase
       .from("service")
       .insert({
         title:        row.name.trim(),
         description:  row.task  || null,
-        hours:        1,
+        hours:        parseFloat(row.hours) || 1,
         business_id:  profile.business_id,
         service_type: "Custom",
         main_service: true,
@@ -248,6 +286,43 @@ export default function ServiceQuoteLink({
       .single();
     if (error) throw error;
     return data;
+  };
+
+  // ── Copy a Reusable template into a new Custom service (with material links) ──
+  const copyServiceAsCustom = async (sourceId, overrides = {}) => {
+    const { data: src } = await supabase.from("service").select("*").eq("service_id", sourceId).single();
+    if (!src) throw new Error("Source service not found");
+
+    const { data: copy, error: ce } = await supabase.from("service").insert({
+      title:           overrides.title       ?? src.title,
+      description:     overrides.description ?? src.description,
+      hours:           overrides.hours       ?? src.hours,
+      image_url:       src.image_url,
+      business_id:     profile.business_id,
+      service_type:    "Custom",
+      main_service:    true,
+      main_service_id: null,
+    }).select("service_id").single();
+    if (ce) throw ce;
+
+    // Mirror material links from the template
+    const { data: mats } = await supabase
+      .from("material_service_link")
+      .select("material_id, quantity, sort_order")
+      .eq("service_id", sourceId);
+    if (mats?.length) {
+      await supabase.from("material_service_link").insert(
+        mats.map(m => ({
+          service_id:  copy.service_id,
+          material_id: m.material_id,
+          business_id: profile.business_id,
+          quantity:    m.quantity,
+          sort_order:  m.sort_order ?? 0,
+        }))
+      );
+    }
+
+    return copy.service_id;
   };
 
   // ── Save materials to a service (called during bulk save) ─────────────────
@@ -308,81 +383,115 @@ export default function ServiceQuoteLink({
     }
   };
 
-  // ── Bulk save (called directly or from dialog) ────────────────────────────
-  const saveChanges = async (mode = "update") => {
+  // ── Bulk save ─────────────────────────────────────────────────────────────
+  // Reusable services are templates — always copy them as Custom when linking to a quote.
+  // Custom / Customer Request services are per-quote copies — update in-place.
+  const saveChanges = async () => {
     setSaving(true); setError(null);
     try {
       if (quoteId) {
-        // Commit deferred service removals
-        for (const id of pendingDeletes)
-          await supabase.from("quote_service_link").delete().eq("quote_service_link_id", id);
+        // Commit deferred removals; delete orphaned Custom/Customer Request services
+        for (const del of pendingDeletes) {
+          await supabase.from("quote_service_link").delete().eq("quote_service_link_id", del.linkId);
+          if (del.serviceId && (del.serviceType === "Custom" || del.serviceType === "Customer Request")) {
+            const { count } = await supabase.from("quote_service_link")
+              .select("quote_service_link_id", { count: "exact", head: true })
+              .eq("service_id", del.serviceId);
+            if (!count) {
+              await supabase.from("material_service_link").delete().eq("service_id", del.serviceId);
+              await supabase.from("service").delete().eq("service_id", del.serviceId);
+            }
+          }
+        }
 
         for (let i = 0; i < linkedServices.length; i++) {
           const row = linkedServices[i];
           if (!row.serviceId && !row.name.trim()) continue;
-          const qty = Math.max(1, parseInt(row.quantity) || 1);
-          const isModified = !!row.serviceId && isServiceModified(i);
+          const qty             = Math.max(1, parseInt(row.quantity) || 1);
+          const origType        = originalServices[i]?.serviceType;
+          // User promoted this row to Reusable — save template first, then copy as Custom for the quote
+          const becomingReusable = isTypeChanged(i) && row.serviceType === "Reusable";
+
+          // A row needs a copy if: new link to a Reusable template, OR being promoted to Reusable,
+          // OR an existing Reusable link where something actually changed.
+          // Do NOT copy on every save with no changes — that would reset hours to the template value.
+          const needsCopy = row.linkId
+            ? (becomingReusable || (origType === "Reusable" && isServiceModified(i)))
+            : !!(row.serviceId);
           let finalServiceId = row.serviceId;
 
           if (!row.serviceId && row.name.trim()) {
+            // Typed name — brand-new Custom service
             const newSvc = await createCustomService(row);
             finalServiceId = newSvc.service_id;
             await supabase.from("quote_service_link").insert({ quote_id: quoteId, service_id: finalServiceId, task: row.task || null, quantity: qty });
-          } else if (row.linkId) {
-            await supabase.from("quote_service_link").update({ task: row.task || null, quantity: qty }).eq("quote_service_link_id", row.linkId);
-            if (mode === "update" && isModified && row.name !== originalServices[i]?.name) {
-              await supabase.from("service").update({ title: row.name }).eq("service_id", row.serviceId);
-            } else if (mode === "create-new" && isModified) {
-              const newSvc = await createCustomService(row);
-              finalServiceId = newSvc.service_id;
-              await supabase.from("quote_service_link").update({ service_id: finalServiceId }).eq("quote_service_link_id", row.linkId);
+
+          } else if (needsCopy) {
+            const overrides = {};
+            if (isNameModified(i))  overrides.title = row.name;
+            // Always carry the UI hours into the copy — prevents template's hours (which may
+            // be 0 or stale) from overwriting what the user sees and expects to persist.
+            overrides.hours = parseFloat(row.hours) || 0;
+            // If being promoted to Reusable, persist that to the original record before copying
+            if (becomingReusable) {
+              await supabase.from("service").update({ service_type: "Reusable" }).eq("service_id", row.serviceId);
             }
-          } else if (row.serviceId) {
-            if (mode === "update" && isModified && row.name !== originalServices[i]?.name) {
-              await supabase.from("service").update({ title: row.name }).eq("service_id", row.serviceId);
-            } else if (mode === "create-new" && isModified) {
-              const newSvc = await createCustomService(row);
-              finalServiceId = newSvc.service_id;
+            finalServiceId = await copyServiceAsCustom(row.serviceId, overrides);
+            if (row.linkId) {
+              await supabase.from("quote_service_link").update({ service_id: finalServiceId, task: row.task || null, quantity: qty }).eq("quote_service_link_id", row.linkId);
+            } else {
+              await supabase.from("quote_service_link").insert({ quote_id: quoteId, service_id: finalServiceId, task: row.task || null, quantity: qty });
             }
-            await supabase.from("quote_service_link").insert({ quote_id: quoteId, service_id: finalServiceId, task: row.task || null, quantity: qty });
+
+          } else {
+            // Custom or Customer Request — update in-place
+            if (isServiceModified(i) && row.serviceId) {
+              const updates = {};
+              if (isNameModified(i))  updates.title = row.name;
+              if (isHoursModified(i)) updates.hours = parseFloat(row.hours) || 0;
+              if (Object.keys(updates).length) await supabase.from("service").update(updates).eq("service_id", row.serviceId);
+            }
+            if (row.linkId) {
+              await supabase.from("quote_service_link").update({ task: row.task || null, quantity: qty }).eq("quote_service_link_id", row.linkId);
+            } else {
+              await supabase.from("quote_service_link").insert({ quote_id: quoteId, service_id: finalServiceId, task: row.task || null, quantity: qty });
+            }
           }
 
           if (hasMaterialChanges(row.materialsPending)) {
-            const matMode = (mode === "create-new" && isModified) ? "create-new" : "update";
-            await saveMaterialsForRow(finalServiceId, row.materialsPending, matMode);
+            await saveMaterialsForRow(finalServiceId, row.materialsPending, "update");
+          }
+          // Apply type change for Custom↔CustomerRequest reclassification only.
+          // Reusable originals are already handled (copied as Custom); becomingReusable is handled above.
+          if (isTypeChanged(i) && finalServiceId && origType !== "Reusable" && !becomingReusable) {
+            await supabase.from("service").update({ service_type: row.serviceType }).eq("service_id", finalServiceId);
           }
         }
-        if (onSave) onSave();
+
+        const hasCustomerRequests = linkedServices.some(r => r.serviceType === "Customer Request");
+        if (onSave) onSave(hasCustomerRequests);
+
       } else {
-        // Local mode — create new services in DB, return full resolved list
+        // Local mode — no DB writes. Collect an in-memory recipe for AddJobModal to
+        // materialise when the user presses "Add Job".
         const resolved = [];
         for (let i = 0; i < linkedServices.length; i++) {
           const row = linkedServices[i];
           if (!row.serviceId && !row.name.trim()) continue;
-          const isModified = !!row.serviceId && isServiceModified(i);
-          let finalServiceId = row.serviceId;
-
-          if (!row.serviceId && row.name.trim()) {
-            const newSvc = await createCustomService(row);
-            finalServiceId = newSvc.service_id;
-            resolved.push({ serviceId: finalServiceId, name: newSvc.title, task: row.task, quantity: row.quantity });
-          } else if (row.serviceId) {
-            if (mode === "update" && isModified && row.name !== originalServices[i]?.name) {
-              await supabase.from("service").update({ title: row.name }).eq("service_id", row.serviceId);
-            } else if (mode === "create-new" && isModified) {
-              const newSvc = await createCustomService(row);
-              finalServiceId = newSvc.service_id;
-            }
-            resolved.push({ serviceId: finalServiceId, name: row.name, task: row.task, quantity: row.quantity });
-          }
-
-          if (hasMaterialChanges(row.materialsPending)) {
-            const matMode = (mode === "create-new" && isModified) ? "create-new" : "update";
-            await saveMaterialsForRow(finalServiceId, row.materialsPending, matMode);
-          }
+          resolved.push({
+            sourceServiceId:  row.serviceId || null,   // Reusable template (or null if typed)
+            isNewTyped:       !row.serviceId,
+            name:             row.name,
+            task:             row.task,
+            quantity:         row.quantity,
+            hours:            parseFloat(row.hours) || 0,
+            serviceType:      row.serviceType || "Custom",
+            materialsPending: row.materialsPending || null,
+          });
         }
         if (onSave) onSave(resolved);
       }
+
       onClose();
     } catch (err) {
       setError(err.message || "Failed to save.");
@@ -392,13 +501,7 @@ export default function ServiceQuoteLink({
   };
 
   // ── Save entry point ───────────────────────────────────────────────────────
-  const handleSave = () => {
-    if (hasModifiedExistingServices()) {
-      setShowSaveDialog(true);
-    } else {
-      saveChanges("update");
-    }
-  };
+  const handleSave = () => saveChanges();
 
   if (!isOpen) return null;
 
@@ -422,17 +525,19 @@ export default function ServiceQuoteLink({
                 <table className="w-full text-sm table-fixed">
                   <colgroup>
                     <col style={{ width: "28px" }} />
-                    <col style={{ width: "26%" }} />
+                    <col style={{ width: "22%" }} />
                     <col />
-                    <col style={{ width: "110px" }} />
                     <col style={{ width: "72px" }} />
-                    <col style={{ width: "110px" }} />
+                    <col style={{ width: "90px" }} />
+                    <col style={{ width: "72px" }} />
+                    <col style={{ width: "130px" }} />
                   </colgroup>
                   <thead className="bg-zinc-800 sticky top-0">
                     <tr>
                       <th className="p-3"></th>
                       <th className="p-3 text-left text-xs font-bold text-zinc-400 uppercase">Service</th>
                       <th className="p-3 text-left text-xs font-bold text-zinc-400 uppercase">Task</th>
+                      <th className="p-3 text-center text-xs font-bold text-zinc-400 uppercase">Labour</th>
                       <th className="p-3 text-center text-xs font-bold text-zinc-400 uppercase">Materials</th>
                       <th className="p-3 text-left text-xs font-bold text-zinc-400 uppercase">Qty</th>
                       <th className="p-3 text-center text-xs font-bold text-zinc-400 uppercase">Actions</th>
@@ -447,30 +552,40 @@ export default function ServiceQuoteLink({
                       const matChanged  = hasMaterialChanges(row.materialsPending);
                       const anyChanged  = isServiceModified(index);
 
+                      const rowType = row.serviceType || "Reusable";
+                      const isCustomerRequest = rowType === "Customer Request";
+                      const rowStyle = dragOverIndex === index && dragIndex !== index
+                        ? { background: "rgba(56,189,248,0.1)" }
+                        : svcTypeRowStyle(rowType);
+
                       return (
                         <tr
                           key={index}
-                          draggable
-                          onDragStart={e => handleDragStart(e, index)}
                           onDragOver={e => handleDragOver(e, index)}
                           onDrop={e => handleDrop(e, index)}
                           onDragEnd={handleDragEnd}
-                          className={`border-b border-zinc-800 transition-colors ${dragOverIndex === index && dragIndex !== index ? "bg-sky-500/10 border-sky-500/40" : "hover:bg-zinc-800/50"}`}
+                          style={{ ...rowStyle, position: "relative", zIndex: activeDropdown === index ? 100 : "auto" }}
+                          className="border-b border-zinc-800 transition-colors"
                         >
-                          <td className="p-2 text-center cursor-grab active:cursor-grabbing select-none text-zinc-500 hover:text-zinc-300">⠿</td>
+                          <td
+                            className="p-2 text-center cursor-grab active:cursor-grabbing select-none text-zinc-500 hover:text-zinc-300"
+                            draggable
+                            onDragStart={e => handleDragStart(e, index)}
+                          >⠿</td>
 
                           {/* Service name + dropdown */}
-                          <td className="p-3 sql-dropdown" style={{ position: "relative" }}>
+                          <td className="p-3 sql-dropdown" style={{ position: "relative", zIndex: activeDropdown === index ? 200 : "auto" }}>
                             <input
                               type="text"
                               value={row.name}
                               onChange={e => handleNameChange(index, e.target.value)}
                               onFocus={() => { setActiveDropdown(index); setDropdownSearch(row.name); }}
-                              className="w-full p-1 rounded bg-zinc-950 border border-zinc-700 text-sm"
+                              className="w-full p-1 bg-zinc-950 border border-zinc-700 text-sm"
+                              style={{ borderRadius: "6px" }}
                               placeholder="Search or type…"
                             />
                             {showDrop && filtered.length > 0 && (
-                              <div className="absolute z-50 w-full mt-1 bg-zinc-800 border border-zinc-700 rounded-xl max-h-48 overflow-y-auto">
+                              <div className="absolute z-50 w-full mt-1 bg-zinc-800 border border-zinc-700 max-h-48 overflow-y-auto" style={{ borderRadius: "6px" }}>
                                 {filtered.map(s => (
                                   <div key={s.service_id} onClick={() => selectService(index, s)}
                                     className="p-2 hover:bg-zinc-700 cursor-pointer text-sm">{s.title}</div>
@@ -481,10 +596,35 @@ export default function ServiceQuoteLink({
 
                           {/* Task */}
                           <td className="p-3">
-                            <input type="text" value={row.task}
-                              onChange={e => handleRowChange(index, "task", e.target.value)}
-                              className="w-full p-1 rounded bg-zinc-950 border border-zinc-700 text-sm"
+                            <textarea
+                              value={row.task}
+                              onChange={e => {
+                                handleRowChange(index, "task", e.target.value);
+                                e.target.style.height = "auto";
+                                e.target.style.height = e.target.scrollHeight + "px";
+                              }}
+                              onFocus={e => { e.target.style.height = "auto"; e.target.style.height = e.target.scrollHeight + "px"; }}
+                              className="w-full p-1 bg-zinc-950 border border-zinc-700 text-sm"
                               placeholder="Describe the task…"
+                              rows={1}
+                              style={{ resize: "none", overflow: "hidden", minHeight: "28px", lineHeight: "1.4", whiteSpace: "pre-wrap", wordBreak: "break-word", borderRadius: "6px" }}
+                            />
+                          </td>
+
+                          {/* Labour hours — editable, follows same save rules as name */}
+                          <td className="p-3">
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              value={row.hours}
+                              onChange={e => {
+                                const v = e.target.value.replace(/[^0-9.]/g, "");
+                                const parts = v.split(".");
+                                handleRowChange(index, "hours", parts.length > 2 ? parts[0] + "." + parts.slice(1).join("") : v);
+                              }}
+                              className="w-full p-1 bg-zinc-950 border border-zinc-700 text-sm text-center"
+                              style={{ borderRadius: "6px" }}
+                              placeholder="0"
                             />
                           </td>
 
@@ -506,18 +646,37 @@ export default function ServiceQuoteLink({
                           <td className="p-3">
                             <input type="text" value={row.quantity}
                               onChange={e => handleRowChange(index, "quantity", e.target.value.replace(/[^0-9]/g, ""))}
-                              className="w-full p-1 rounded bg-zinc-950 border border-zinc-700 text-sm"
+                              className="w-full p-1 bg-zinc-950 border border-zinc-700 text-sm"
+                              style={{ borderRadius: "6px" }}
                               placeholder="1"
                             />
                           </td>
 
                           {/* Actions */}
                           <td className="p-3">
-                            <div className="flex items-center justify-center gap-2">
-                              {anyChanged && !isNew && (
+                            <div className="flex items-center justify-center gap-2 flex-wrap">
+                              {isCustomerRequest && (
+                                <>
+                                  <button
+                                    onClick={() => handleRowChange(index, "serviceType", "Custom")}
+                                    disabled={saving}
+                                    style={{ padding: "2px 8px", fontSize: "11px", fontWeight: 700, borderRadius: "6px", border: "none", cursor: saving ? "not-allowed" : "pointer", background: "#38bdf8", color: "#000", opacity: saving ? 0.5 : 1 }}
+                                    title="Mark as Custom">
+                                    Custom
+                                  </button>
+                                  <button
+                                    onClick={() => handleRowChange(index, "serviceType", "Reusable")}
+                                    disabled={saving}
+                                    style={{ padding: "2px 8px", fontSize: "11px", fontWeight: 700, borderRadius: "6px", border: "none", cursor: saving ? "not-allowed" : "pointer", background: "#34d399", color: "#000", opacity: saving ? 0.5 : 1 }}
+                                    title="Mark as Reusable">
+                                    Reusable
+                                  </button>
+                                </>
+                              )}
+                              {anyChanged && !isNew && rowType === "Reusable" && (
                                 <button onClick={() => updateService(index)} disabled={saving}
                                   className="px-2 py-1 text-xs bg-sky-500 text-black rounded font-bold hover:bg-sky-400 disabled:opacity-50">
-                                  Update
+                                  Update Template
                                 </button>
                               )}
                               <button onClick={() => removeRow(index)} disabled={saving}
@@ -561,31 +720,6 @@ export default function ServiceQuoteLink({
           </button>
         </div>
       </div>
-
-      {/* Save mode dialog — shown when existing services have been edited */}
-      {showSaveDialog && (
-        <div className="fixed inset-0 z-[90] bg-black/70 flex items-center justify-center p-4">
-          <div className="bg-zinc-900 rounded-2xl p-6 w-full max-w-lg">
-            <h3 className="text-base font-bold mb-3">Changes Detected</h3>
-            <p className="text-sm text-zinc-300 mb-4">
-              You've edited one or more services (name or materials) that may be used elsewhere. How would you like to proceed?
-            </p>
-            <ul className="text-sm text-zinc-400 mb-5 space-y-2">
-              <li><span className="text-white font-semibold">Update Services</span> — apply all changes (name + materials) to the existing service records. Every quote using them will be affected.</li>
-              <li><span className="text-white font-semibold">Create New Services</span> — duplicate the changed services with the new details for this quote only. Other quotes keep the originals unchanged.</li>
-              <li><span className="text-white font-semibold">Cancel</span> — go back without saving.</li>
-            </ul>
-            <div className="flex flex-wrap gap-3 justify-end">
-              <button onClick={() => setShowSaveDialog(false)}
-                className="px-4 py-2 text-sm border border-zinc-600 rounded-xl hover:bg-zinc-800">Cancel</button>
-              <button onClick={() => { setShowSaveDialog(false); saveChanges("create-new"); }}
-                className="px-4 py-2 text-sm bg-sky-500 text-black rounded-xl font-bold hover:bg-sky-400">Create New Services</button>
-              <button onClick={() => { setShowSaveDialog(false); saveChanges("update"); }}
-                className="px-4 py-2 text-sm bg-sky-500 text-black rounded-xl font-bold hover:bg-sky-400">Update Services</button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Materials editor — deferred mode, writes to DB only when ServiceQuoteLink saves */}
       {materialsEditIndex !== null && (

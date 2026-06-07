@@ -16,7 +16,7 @@ function StatusBadge({ status }) {
     <span style={{
       display: "inline-block",
       padding: "2px 10px",
-      borderRadius: "999px",
+      borderRadius: "6px",
       fontSize: "12px",
       fontWeight: 600,
       background: c.bg,
