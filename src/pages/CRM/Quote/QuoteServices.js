@@ -7,7 +7,7 @@ import ServiceQuoteLink from "./ServiceQuoteLink";
 import ServiceForm from "../../Settings/Services/ServiceForm";
 import MaterialServiceLink from "../../Settings/Services/MaterialServiceLink";
 
-export default function QuoteServices() {
+export default function QuoteServices({ onCustomerRequestsChange }) {
   const { quoteId } = useParams();
   const { profile } = useAuth();
 
@@ -24,6 +24,9 @@ export default function QuoteServices() {
   const [converting,     setConverting]     = useState(null);
   const convertSavedRef = useRef(false);
 
+  const [reusableServices,  setReusableServices]  = useState([]);
+  const [customMaterialsMap, setCustomMaterialsMap] = useState({});
+
   // Post-save send dialog
   const [sendDialog,    setSendDialog]    = useState(false);
   const [sending,       setSending]       = useState(false);
@@ -33,19 +36,46 @@ export default function QuoteServices() {
 
   const loadServices = useCallback(async () => {
     setLoading(true);
-    const [{ data, error }, { data: quoteRow }] = await Promise.all([
+    const [{ data, error }, { data: quoteRow }, { data: reusables }] = await Promise.all([
       supabase
         .from("quote_service_link")
         .select("quote_service_link_id, quantity, task, service:service_id(service_id, title, service_type, hours)")
         .eq("quote_id", quoteId)
         .order("created_at"),
       supabase.from("quote").select("status").eq("quote_id", quoteId).single(),
+      supabase
+        .from("service")
+        .select("service_id, title, hours, material_service_link(material_id, quantity)")
+        .eq("business_id", profile.business_id)
+        .eq("service_type", "Reusable")
+        .eq("main_service", true),
     ]);
     if (error) { setError("Failed to load services."); setLoading(false); return; }
     setServices(data ?? []);
     setQuoteStatus(quoteRow?.status ?? null);
+    setReusableServices(reusables ?? []);
+
+    const customIds = (data ?? [])
+      .filter(s => s.service?.service_type === "Custom" || s.service?.service_type === "Customer Request")
+      .map(s => s.service?.service_id)
+      .filter(Boolean);
+    if (customIds.length) {
+      const { data: mats } = await supabase
+        .from("material_service_link")
+        .select("service_id, material_id, quantity")
+        .in("service_id", customIds);
+      const map = {};
+      (mats ?? []).forEach(m => {
+        if (!map[m.service_id]) map[m.service_id] = [];
+        map[m.service_id].push({ material_id: m.material_id, quantity: m.quantity });
+      });
+      setCustomMaterialsMap(map);
+    } else {
+      setCustomMaterialsMap({});
+    }
+
     setLoading(false);
-  }, [quoteId]);
+  }, [quoteId, profile?.business_id]);
 
   useEffect(() => { loadServices(); }, [loadServices]);
 
@@ -67,6 +97,7 @@ export default function QuoteServices() {
     loadServices();
     setSendError(null);
     setSentMsg(null);
+    if (onCustomerRequestsChange) onCustomerRequestsChange();
     if (hasCustomerRequests) {
       setDraftWarning(true);
     } else {
@@ -140,6 +171,26 @@ export default function QuoteServices() {
     setConverting(null);
   };
 
+  const isExactReusableCopy = (svcRow) => {
+    const svc = svcRow.service;
+    if (!svc) return false;
+    const match = reusableServices.find(
+      r => r.title.toLowerCase() === (svc.title || "").toLowerCase()
+    );
+    if (!match) return false;
+    if (parseFloat(svc.hours || 0) !== parseFloat(match.hours || 0)) return false;
+    const cMats = (customMaterialsMap[svc.service_id] || [])
+      .slice().sort((a, b) => a.material_id.localeCompare(b.material_id));
+    const rMats = (match.material_service_link || [])
+      .slice().sort((a, b) => a.material_id.localeCompare(b.material_id));
+    if (cMats.length !== rMats.length) return false;
+    for (let i = 0; i < cMats.length; i++) {
+      if (cMats[i].material_id !== rMats[i].material_id) return false;
+      if (parseInt(cMats[i].quantity, 10) !== parseInt(rMats[i].quantity, 10)) return false;
+    }
+    return true;
+  };
+
   if (loading) return <p className="text-zinc-400 text-sm">Loading…</p>;
   if (error)   return <p className="text-red-400 text-sm">{error}</p>;
 
@@ -161,10 +212,8 @@ export default function QuoteServices() {
             );
           })()}
           {services.some(s => s.service?.service_type === "Customer Request") && (
-            <span style={{ fontSize: "13px", color: "#fbbf24", fontWeight: 500, lineHeight: 1.6, display: "flex", flexDirection: "column", gap: "1px" }}>
-              <span>⚠&nbsp; The customer has submitted service requests that require approval. To review and approve them use one of the options:</span>
-              <span style={{ paddingLeft: "20px" }}>- Click <strong>Edit Services</strong> then use the <strong style={{ color: "#34d399" }}>Reusable</strong> or <strong style={{ color: "#38bdf8" }}>Custom</strong> buttons to classify and approve each service.</span>
-              <span style={{ paddingLeft: "20px" }}>- Use the <strong>Edit</strong> button on each amber row.</span>
+            <span style={{ fontSize: "13px", color: "#fbbf24", fontWeight: 500, lineHeight: 1.6 }}>
+              ⚠&nbsp; The customer has submitted service requests that require your review. Click <strong>Edit Services</strong> or the <strong>Edit</strong> button on each amber row to manage them.
             </span>
           )}
         </div>
@@ -216,7 +265,9 @@ export default function QuoteServices() {
               {services.map(s => {
                 const svcType    = s.service?.service_type;
                 const svcId      = s.service?.service_id;
-                const canConvert = (svcType === "Custom" || svcType === "Customer Request") && quoteStatus !== "Draft";
+                const canConvert = (svcType === "Custom" || svcType === "Customer Request")
+                  && quoteStatus !== "Draft"
+                  && !isExactReusableCopy(s);
                 const isConverting = converting === svcId;
                 return (
                   <tr key={s.quote_service_link_id} className="hover:bg-zinc-800 transition">
@@ -255,7 +306,7 @@ export default function QuoteServices() {
                             className="px-3 py-1 text-xs rounded-lg font-semibold transition disabled:opacity-50"
                             style={{ background: "#34d399", color: "#000" }}
                           >
-                            {isConverting ? "Copying…" : "Convert to Reusable Template"}
+                            {isConverting ? "Copying…" : "Convert to Reusable Service"}
                           </button>
                         )}
                         {quoteStatus === "Draft" && (

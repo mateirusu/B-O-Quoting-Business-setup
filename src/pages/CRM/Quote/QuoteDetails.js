@@ -10,7 +10,7 @@ const SECTION_KEYS = {
 
 const STATUS_OPTIONS = ["Draft", "Sent", "Accepted", "Declined"];
 
-export default function QuoteDetails() {
+export default function QuoteDetails({ hasCustomerRequests = false, onNavigateToServices }) {
   const { quoteId } = useParams();
   const navigate    = useNavigate();
   const { profile } = useAuth();
@@ -177,6 +177,26 @@ export default function QuoteDetails() {
 
   return (
     <div className="space-y-6">
+
+      {/* ── Customer Request banner ── */}
+      {hasCustomerRequests && (
+        <div style={{ background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.4)", borderRadius: "12px", padding: "14px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "16px" }}>
+          <div style={{ display: "flex", alignItems: "flex-start", gap: "10px" }}>
+            <span style={{ color: "#f59e0b", fontSize: "16px", flexShrink: 0, marginTop: "1px" }}>⚠</span>
+            <p style={{ color: "#fcd34d", fontSize: "14px", margin: 0 }}>
+              The customer has submitted service requests that require your approval. Navigate to the <strong>Services</strong> section to review and approve them.
+            </p>
+          </div>
+          {onNavigateToServices && (
+            <button
+              onClick={onNavigateToServices}
+              style={{ flexShrink: 0, padding: "6px 14px", background: "#f59e0b", color: "#000", fontWeight: 700, fontSize: "13px", borderRadius: "8px", border: "none", cursor: "pointer" }}
+            >
+              Go to Services
+            </button>
+          )}
+        </div>
+      )}
 
       {/* ── Details ── */}
       <div className="rounded-3xl border border-zinc-800 bg-zinc-900">
