@@ -75,7 +75,10 @@ export default function QuoteServices({ onCustomerRequestsChange }) {
     }
 
     setLoading(false);
-  }, [quoteId, profile?.business_id]);
+
+    // Notify parent so the amber dot on the Services nav updates immediately
+    if (onCustomerRequestsChange) onCustomerRequestsChange();
+  }, [quoteId, profile?.business_id, onCustomerRequestsChange]);
 
   useEffect(() => { loadServices(); }, [loadServices]);
 
@@ -97,6 +100,7 @@ export default function QuoteServices({ onCustomerRequestsChange }) {
     loadServices();
     setSendError(null);
     setSentMsg(null);
+    setDraftWarning(false);
     if (onCustomerRequestsChange) onCustomerRequestsChange();
     if (hasCustomerRequests) {
       setDraftWarning(true);
@@ -211,6 +215,16 @@ export default function QuoteServices({ onCustomerRequestsChange }) {
               </span>
             );
           })()}
+          {quoteStatus === "Draft" && !services.some(s => s.service?.service_type === "Customer Request") && (
+            <button
+              onClick={handleSendQuote}
+              disabled={sending}
+              className="px-3 py-1 text-sm font-semibold rounded-xl transition disabled:opacity-50 whitespace-nowrap"
+              style={{ background: "#34d399", color: "#000" }}
+            >
+              {sending ? "Sending…" : "Send Quote"}
+            </button>
+          )}
           {services.some(s => s.service?.service_type === "Customer Request") && (
             <span style={{ fontSize: "13px", color: "#fbbf24", fontWeight: 500, lineHeight: 1.6 }}>
               ⚠&nbsp; The customer has submitted service requests that require your review. Click <strong>Edit Services</strong> or the <strong>Edit</strong> button on each amber row to manage them.

@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../supabaseClient";
 import { sendQuote } from "../utils/quoteSend";
 import ServiceQuoteLink from "../pages/CRM/Quote/ServiceQuoteLink";
+import AddressLookup from "./AddressLookup";
 
 const customerName = c =>
   [c?.first_name, c?.last_name].filter(Boolean).join(" ") || "Unnamed";
@@ -23,10 +24,17 @@ export default function AddQuoteModal({ isOpen, onClose, onSaved, profile }) {
   const [jobDropOpen,      setJobDropOpen]      = useState(false);
   const [selectedServices, setSelectedServices] = useState([]);
   const [servicesModalOpen,setServicesModalOpen]= useState(false);
+  const [addrView,         setAddrView]         = useState("lookup");
+  const [addrForm,         setAddrForm]         = useState({ address_line1: "", address_line2: "", town_city: "", county: "", postcode: "", country: "" });
   const [saving,           setSaving]           = useState(false);
   const [sending,          setSending]          = useState(false);
   const [formError,        setFormError]        = useState(null);
   const [sendStep,         setSendStep]         = useState(null);
+  const [customerMode,     setCustomerMode]     = useState("search"); // "search" | "new"
+  const [newCustForm,      setNewCustForm]      = useState({ first_name: "", last_name: "", email: "" });
+  const [creatingCust,     setCreatingCust]     = useState(false);
+  const [createCustError,  setCreateCustError]  = useState(null);
+  const newCustIdsRef = useRef([]);
 
   // Reset on open
   useEffect(() => {
@@ -43,6 +51,13 @@ export default function AddQuoteModal({ isOpen, onClose, onSaved, profile }) {
     setSelectedServices([]);
     setFormError(null);
     setSendStep(null);
+    setCustomerMode("search");
+    setNewCustForm({ first_name: "", last_name: "", email: "" });
+    setCreatingCust(false);
+    setCreateCustError(null);
+    newCustIdsRef.current = [];
+    setAddrView("lookup");
+    setAddrForm({ address_line1: "", address_line2: "", town_city: "", county: "", postcode: "", country: "" });
   }, [isOpen]);
 
   // Load all customers for this business
@@ -74,31 +89,64 @@ export default function AddQuoteModal({ isOpen, onClose, onSaved, profile }) {
     setSelectedCustomer(c);
     setCustomerSearch(customerName(c));
     setCustomerDropOpen(false);
+    setAddrForm({
+      address_line1: c?.address_line1 || "",
+      address_line2: c?.address_line2 || "",
+      town_city:     c?.town_city     || "",
+      county:        c?.county        || "",
+      postcode:      c?.postcode      || "",
+      country:       c?.country       || "",
+    });
+    setAddrView(c?.address_line1 || c?.postcode ? "display" : "lookup");
+  };
+
+  const handleAddressSelect = r => {
+    setAddrForm({
+      address_line1: r.line1    || "",
+      address_line2: r.line2    || "",
+      town_city:     r.city     || "",
+      county:        r.county   || "",
+      postcode:      r.postcode || "",
+      country:       r.country  || "",
+    });
+    setAddrView("display");
   };
 
   const handleJobSelect = j => {
     setSelectedJob(j);
-    setJobSearch(j.title);
+    setJobSearch(j.title || "");
     setJobDropOpen(false);
   };
 
-  // Address lines from the selected customer
-  const addrLines = selectedCustomer
-    ? [
-        selectedCustomer.address_line1,
-        selectedCustomer.address_line2,
-        [selectedCustomer.town_city, selectedCustomer.postcode].filter(Boolean).join(", "),
-        selectedCustomer.county,
-        selectedCustomer.country,
-      ].filter(Boolean)
-    : [];
-
   const save = async () => {
-    if (!title.trim())       { setFormError("Title is required.");           return; }
-    if (!selectedCustomer)   { setFormError("Please select a customer.");    return; }
-    if (!selectedJob)        { setFormError("Please select a job.");         return; }
+    if (!title.trim())                              { setFormError("Title is required.");        return; }
+    if (!selectedCustomer)                         { setFormError("Please select a customer."); return; }
+    if (!selectedJob && jobs.length > 0)           { setFormError("Please select a job.");      return; }
+    if (!addrForm.address_line1 && !addrForm.postcode) { setFormError("Address is required."); return; }
     setSaving(true);
     setFormError(null);
+
+    // If the customer has no jobs, auto-create one using the quote title + description
+    let jobId = selectedJob?.job_id ?? null;
+    if (!jobId) {
+      const { data: newJob, error: jobErr } = await supabase
+        .from("job")
+        .insert({
+          title:         title.trim(),
+          description:   description || null,
+          customer_id:   selectedCustomer.customer_id,
+          address_line1: addrForm.address_line1 || null,
+          address_line2: addrForm.address_line2 || null,
+          town_city:     addrForm.town_city     || null,
+          county:        addrForm.county        || null,
+          postcode:      addrForm.postcode      || null,
+          country:       addrForm.country       || null,
+        })
+        .select("job_id")
+        .single();
+      if (jobErr) { setSaving(false); setFormError(jobErr.message || "Failed to create job."); return; }
+      jobId = newJob.job_id;
+    }
 
     // Get next quote number for this customer
     const { data: nextNum } = await supabase.rpc("get_next_quote_number", {
@@ -127,10 +175,17 @@ export default function AddQuoteModal({ isOpen, onClose, onSaved, profile }) {
     });
     if (quoteErr) { setSaving(false); setFormError(quoteErr.message || "Failed to create quote."); return; }
 
-    await supabase.from("job_quote_link").insert({
-      job_id:   selectedJob.job_id,
-      quote_id: quoteId,
-    });
+    await supabase.from("job_quote_link").insert({ job_id: jobId, quote_id: quoteId });
+
+    // Sync address to customer record
+    await supabase.from("customer").update({
+      address_line1: addrForm.address_line1 || null,
+      address_line2: addrForm.address_line2 || null,
+      town_city:     addrForm.town_city     || null,
+      county:        addrForm.county        || null,
+      postcode:      addrForm.postcode      || null,
+      country:       addrForm.country       || null,
+    }).eq("customer_id", selectedCustomer.customer_id);
 
     if (profile?.business_id) {
       await supabase.from("quote_timeline").insert({
@@ -245,14 +300,8 @@ export default function AddQuoteModal({ isOpen, onClose, onSaved, profile }) {
     }
 
     setSaving(false);
-
-    if (!selectedServices.length) {
-      if (onSaved) onSaved();
-      onClose();
-      navigate(`/crm/quotes/${quoteId}`);
-    } else {
-      setSendStep({ quoteId });
-    }
+    newCustIdsRef.current = [];
+    setSendStep({ quoteId });
   };
 
   const handleSendYes = async () => {
@@ -276,6 +325,40 @@ export default function AddQuoteModal({ isOpen, onClose, onSaved, profile }) {
     navigate(`/crm/quotes/${id}`);
   };
 
+  const handleCreateCustomer = async () => {
+    if (!newCustForm.first_name.trim()) { setCreateCustError("First name is required."); return; }
+    setCreatingCust(true);
+    setCreateCustError(null);
+    const cap = s => s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+    const { data: cust, error: custErr } = await supabase
+      .from("customer")
+      .insert({
+        first_name:  cap(newCustForm.first_name.trim()),
+        last_name:   cap(newCustForm.last_name.trim())  || null,
+        email:       newCustForm.email.trim()            || null,
+        business_id: profile.business_id,
+      })
+      .select("customer_id, first_name, last_name, address_line1, address_line2, town_city, county, postcode, country")
+      .single();
+    if (custErr) { setCreatingCust(false); setCreateCustError(custErr.message || "Failed to create customer."); return; }
+    newCustIdsRef.current.push(cust.customer_id);
+    setCustomers(prev => [...prev, cust]);
+    handleCustomerSelect(cust);
+    setCustomerMode("search");
+    setNewCustForm({ first_name: "", last_name: "", email: "" });
+    setCreatingCust(false);
+  };
+
+  const handleCancel = async () => {
+    if (newCustIdsRef.current.length) {
+      for (const id of newCustIdsRef.current) {
+        await supabase.from("customer").delete().eq("customer_id", id);
+      }
+      newCustIdsRef.current = [];
+    }
+    onClose();
+  };
+
   if (!isOpen) return null;
 
   const filteredCustomers = customers.filter(c =>
@@ -290,11 +373,11 @@ export default function AddQuoteModal({ isOpen, onClose, onSaved, profile }) {
       <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
         <div className="bg-zinc-900 rounded-2xl w-full max-w-2xl" style={{ height: "90vh", display: "flex", flexDirection: "column" }}>
 
-          <h3 style={{ flexShrink: 0 }} className="text-xl font-bold px-6 pt-6 pb-4 text-white border-b border-zinc-800">
+          <h3 style={{ flexShrink: 0, paddingLeft: "24px", paddingRight: "24px" }} className="text-xl font-bold px-6 pt-6 pb-4 text-white border-b border-zinc-800">
             Add Quote
           </h3>
 
-          <div style={{ flex: "1 1 0", overflowY: "auto", minHeight: 0 }} className="px-6 py-4 space-y-4">
+          <div style={{ flex: "1 1 0", overflowY: "auto", minHeight: 0, paddingLeft: "24px", paddingRight: "24px" }} className="px-6 py-4 space-y-4">
 
             {/* Title */}
             <div>
@@ -315,44 +398,111 @@ export default function AddQuoteModal({ isOpen, onClose, onSaved, profile }) {
                 onChange={e => setDescription(e.target.value)}
                 rows={3}
                 className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm resize-none"
+                style={{ resize: "vertical", width: "100%", boxSizing: "border-box" }}
                 placeholder="Details about the quote…"
               />
             </div>
 
-            {/* Customer dropdown */}
-            <div style={{ position: "relative" }}>
+            {/* Customer */}
+            <div>
               <label className="text-xs text-zinc-400 mb-1 block">Customer <span className="text-red-400">*</span></label>
-              <input
-                value={customerSearch}
-                onChange={e => {
-                  setCustomerSearch(e.target.value);
-                  setCustomerDropOpen(true);
-                  if (!e.target.value) { setSelectedCustomer(null); }
-                }}
-                onFocus={() => setCustomerDropOpen(true)}
-                onBlur={() => setTimeout(() => setCustomerDropOpen(false), 150)}
-                placeholder="Search customer…"
-                className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm"
-              />
-              {customerDropOpen && (
-                <div style={{
-                  position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0,
-                  zIndex: 200, background: "#09090b", border: "1px solid #3f3f46",
-                  borderRadius: "6px", maxHeight: "200px", overflowY: "auto",
-                }}>
-                  {filteredCustomers.length === 0 && (
-                    <p className="px-4 py-3 text-sm text-zinc-500">No customers found.</p>
-                  )}
-                  {filteredCustomers.map(c => (
-                    <div
-                      key={c.customer_id}
-                      onMouseDown={() => handleCustomerSelect(c)}
-                      className="px-4 py-3 text-sm text-white cursor-pointer hover:bg-zinc-800 transition"
-                      style={{ borderBottom: "1px solid #27272a" }}
-                    >
-                      {customerName(c)}
+
+              {customerMode === "search" ? (
+                <div style={{ position: "relative" }}>
+                  <input
+                    value={customerSearch}
+                    onChange={e => {
+                      setCustomerSearch(e.target.value);
+                      setCustomerDropOpen(true);
+                      if (!e.target.value) setSelectedCustomer(null);
+                    }}
+                    onFocus={() => setCustomerDropOpen(true)}
+                    onBlur={() => setTimeout(() => setCustomerDropOpen(false), 150)}
+                    placeholder="Search customer…"
+                    className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm"
+                  />
+                  {customerDropOpen && (
+                    <div style={{
+                      position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0,
+                      zIndex: 200, background: "#09090b", border: "1px solid #3f3f46",
+                      borderRadius: "6px", maxHeight: "220px", overflowY: "auto",
+                    }}>
+                      {filteredCustomers.length === 0 && (
+                        <p className="px-4 py-3 text-sm text-zinc-500 border-b border-zinc-800">No customers found.</p>
+                      )}
+                      {filteredCustomers.map(c => (
+                        <div
+                          key={c.customer_id}
+                          onMouseDown={() => handleCustomerSelect(c)}
+                          className="px-4 py-3 text-sm text-white cursor-pointer hover:bg-zinc-800 transition"
+                          style={{ borderBottom: "1px solid #27272a" }}
+                        >
+                          {customerName(c)}
+                        </div>
+                      ))}
+                      <div
+                        onMouseDown={() => { setCustomerDropOpen(false); setCustomerMode("new"); setCreateCustError(null); }}
+                        className="px-4 py-3 text-sm cursor-pointer hover:bg-zinc-800 transition font-medium"
+                        style={{ color: "#38bdf8" }}
+                      >
+                        + Add new customer
+                      </div>
                     </div>
-                  ))}
+                  )}
+                </div>
+              ) : (
+                <div className="rounded-xl border border-zinc-700 p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm text-zinc-300 font-medium">New Customer</p>
+                    <button
+                      type="button"
+                      onClick={() => { setCustomerMode("search"); setCreateCustError(null); }}
+                      className="text-zinc-500 text-xs hover:text-white transition"
+                    >
+                      ← Back to search
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs text-zinc-400 mb-1 block">First Name <span className="text-red-400">*</span></label>
+                      <input
+                        value={newCustForm.first_name}
+                        onChange={e => setNewCustForm(prev => ({ ...prev, first_name: e.target.value }))}
+                        className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm"
+                        placeholder="First name"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-zinc-400 mb-1 block">Last Name</label>
+                      <input
+                        value={newCustForm.last_name}
+                        onChange={e => setNewCustForm(prev => ({ ...prev, last_name: e.target.value }))}
+                        className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm"
+                        placeholder="Last name"
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <label className="text-xs text-zinc-400 mb-1 block">Email</label>
+                      <input
+                        type="email"
+                        value={newCustForm.email}
+                        onChange={e => setNewCustForm(prev => ({ ...prev, email: e.target.value }))}
+                        className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm"
+                        placeholder="Email address"
+                      />
+                    </div>
+                  </div>
+                  {createCustError && <p className="text-red-400 text-sm">{createCustError}</p>}
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={handleCreateCustomer}
+                      disabled={creatingCust}
+                      className="px-4 py-2 rounded-xl bg-sky-500 text-black font-semibold hover:bg-sky-400 transition text-sm disabled:opacity-50"
+                    >
+                      {creatingCust ? "Creating…" : "Add Customer"}
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -364,7 +514,7 @@ export default function AddQuoteModal({ isOpen, onClose, onSaved, profile }) {
                 {jobsLoading ? (
                   <p className="text-zinc-500 text-sm">Loading jobs…</p>
                 ) : jobs.length === 0 ? (
-                  <p className="text-zinc-500 text-sm">No jobs found for this customer.</p>
+                  <p className="text-zinc-500 text-sm">No jobs yet — a job will be created automatically using the quote title.</p>
                 ) : (
                   <>
                     <input
@@ -401,15 +551,70 @@ export default function AddQuoteModal({ isOpen, onClose, onSaved, profile }) {
               </div>
             )}
 
-            {/* Customer address — read-only */}
-            {addrLines.length > 0 && (
-              <div className="rounded-xl border border-zinc-700 p-4">
-                <p className="text-sm text-zinc-300 font-medium mb-2">Customer Address</p>
-                <div className="bg-zinc-950 rounded-xl p-3 text-sm text-zinc-200 space-y-0.5">
-                  {addrLines.map((l, i) => <p key={i}>{l}</p>)}
-                </div>
-              </div>
-            )}
+            {/* Address */}
+            <div className="rounded-xl border border-zinc-700 p-4 space-y-3">
+              <p className="text-sm text-zinc-300 font-medium">Job Address <span className="text-red-400">*</span></p>
+
+              {addrView === "display" && (
+                <>
+                  <div className="bg-zinc-950 rounded-xl p-3 text-sm text-zinc-200 space-y-0.5">
+                    {addrForm.address_line1 && <p>{addrForm.address_line1}</p>}
+                    {addrForm.address_line2 && <p>{addrForm.address_line2}</p>}
+                    {(addrForm.town_city || addrForm.postcode) && <p>{[addrForm.town_city, addrForm.postcode].filter(Boolean).join(", ")}</p>}
+                    {addrForm.county  && <p>{addrForm.county}</p>}
+                    {addrForm.country && <p>{addrForm.country}</p>}
+                  </div>
+                  <button onClick={() => setAddrView("lookup")} className="text-sky-400 text-sm hover:underline">Change address</button>
+                </>
+              )}
+
+              {addrView === "lookup" && (
+                <>
+                  <AddressLookup
+                    onSelect={handleAddressSelect}
+                    onManualEntry={() => {
+                      setAddrForm({ address_line1: "", address_line2: "", town_city: "", county: "", postcode: "", country: "" });
+                      setAddrView("form");
+                    }}
+                  />
+                  {(addrForm.address_line1 || addrForm.postcode) && (
+                    <button onClick={() => setAddrView("display")} className="text-zinc-500 text-sm hover:underline">Cancel</button>
+                  )}
+                </>
+              )}
+
+              {addrView === "form" && (
+                <>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="col-span-2">
+                      <label className="text-xs text-zinc-400 mb-1 block">Address Line 1</label>
+                      <input value={addrForm.address_line1} onChange={e => setAddrForm(prev => ({ ...prev, address_line1: e.target.value }))} className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm" placeholder="Address line 1" />
+                    </div>
+                    <div className="col-span-2">
+                      <label className="text-xs text-zinc-400 mb-1 block">Address Line 2</label>
+                      <input value={addrForm.address_line2} onChange={e => setAddrForm(prev => ({ ...prev, address_line2: e.target.value }))} className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm" placeholder="Address line 2" />
+                    </div>
+                    <div>
+                      <label className="text-xs text-zinc-400 mb-1 block">Town / City</label>
+                      <input value={addrForm.town_city} onChange={e => setAddrForm(prev => ({ ...prev, town_city: e.target.value }))} className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm" placeholder="Town / City" />
+                    </div>
+                    <div>
+                      <label className="text-xs text-zinc-400 mb-1 block">County</label>
+                      <input value={addrForm.county} onChange={e => setAddrForm(prev => ({ ...prev, county: e.target.value }))} className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm" placeholder="County" />
+                    </div>
+                    <div>
+                      <label className="text-xs text-zinc-400 mb-1 block">Postcode</label>
+                      <input value={addrForm.postcode} onChange={e => setAddrForm(prev => ({ ...prev, postcode: e.target.value }))} className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm" placeholder="Postcode" />
+                    </div>
+                    <div>
+                      <label className="text-xs text-zinc-400 mb-1 block">Country</label>
+                      <input value={addrForm.country} onChange={e => setAddrForm(prev => ({ ...prev, country: e.target.value }))} className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm" placeholder="Country" />
+                    </div>
+                  </div>
+                  <button onClick={() => setAddrView("lookup")} className="text-sky-400 text-sm hover:underline">← Back to search</button>
+                </>
+              )}
+            </div>
 
             {/* Services */}
             <div className="flex items-center gap-4">
@@ -431,7 +636,7 @@ export default function AddQuoteModal({ isOpen, onClose, onSaved, profile }) {
           </div>
 
           {sendStep ? (
-            <div style={{ flexShrink: 0 }} className="px-6 py-4 border-t border-zinc-800">
+            <div style={{ flexShrink: 0, paddingLeft: "24px", paddingRight: "24px" }} className="px-6 py-4 border-t border-zinc-800">
               <p className="text-sm text-white font-medium mb-3">
                 Quote saved. Would you like to send it to the customer now?
               </p>
@@ -453,9 +658,9 @@ export default function AddQuoteModal({ isOpen, onClose, onSaved, profile }) {
               </div>
             </div>
           ) : (
-            <div style={{ flexShrink: 0 }} className="px-6 py-4 border-t border-zinc-800 flex justify-end gap-3">
+            <div style={{ flexShrink: 0, paddingLeft: "24px", paddingRight: "24px" }} className="px-6 py-4 border-t border-zinc-800 flex justify-end gap-3">
               <button
-                onClick={onClose}
+                onClick={handleCancel}
                 className="px-5 py-2 rounded-xl border border-zinc-600 text-white hover:bg-zinc-800 transition text-sm"
               >
                 Cancel

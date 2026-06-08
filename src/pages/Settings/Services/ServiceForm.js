@@ -328,9 +328,9 @@ export default function ServiceForm({ serviceId, profile, onClose, onSaved, hide
       <div className="fixed inset-0 z-40 bg-black/70 flex items-center justify-center p-4">
         <div className="bg-zinc-900 rounded-2xl w-full max-w-md" style={{ height: "90vh", display: "flex", flexDirection: "column" }}>
 
-          <h2 className="text-lg font-bold px-5 pt-5 pb-3" style={{ flexShrink: 0 }}>{formTitle}</h2>
+          <h2 className="text-lg font-bold px-5 pt-5 pb-3" style={{ flexShrink: 0, paddingLeft: "24px", paddingRight: "24px" }}>{formTitle}</h2>
 
-          <div className="px-5 pb-3 space-y-3" style={{ flex: "1 1 0", overflowY: "auto", minHeight: 0 }}>
+          <div className="px-5 pb-3 space-y-3" style={{ flex: "1 1 0", overflowY: "auto", minHeight: 0, paddingLeft: "24px", paddingRight: "24px" }}>
             {error && (
               <div className="bg-red-500/10 border border-red-500 rounded-xl p-3 text-red-200 text-sm">{error}</div>
             )}
@@ -372,7 +372,7 @@ export default function ServiceForm({ serviceId, profile, onClose, onSaved, hide
             <div>
               <label className="block text-xs text-zinc-400 mb-1">Description</label>
               <textarea className="w-full p-2 rounded-xl bg-zinc-950 border border-zinc-700 text-white text-sm resize-none"
-                style={{ opacity: fieldsEditable ? 1 : 0.55 }}
+                style={{ opacity: fieldsEditable ? 1 : 0.55, resize: "vertical", width: "100%", boxSizing: "border-box" }}
                 value={tempService.description}
                 readOnly={!fieldsEditable}
                 onChange={e => { if (!fieldsEditable) return; handleChange("description", e.target.value); }}
@@ -489,7 +489,7 @@ export default function ServiceForm({ serviceId, profile, onClose, onSaved, hide
           </div>
 
           {/* Footer */}
-          <div className="flex justify-between items-center px-5 py-4 border-t border-zinc-800" style={{ flexShrink: 0 }}>
+          <div className="flex justify-between items-center px-5 py-4 border-t border-zinc-800" style={{ flexShrink: 0, paddingLeft: "24px", paddingRight: "24px" }}>
             {showDeleteBtn ? (
               <button onClick={() => setDeleteConfirm(true)} disabled={saving}
                 className="px-4 py-2 text-sm bg-red-600 text-white rounded-xl font-bold hover:bg-red-500 disabled:opacity-50">

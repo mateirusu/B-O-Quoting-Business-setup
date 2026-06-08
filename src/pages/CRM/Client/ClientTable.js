@@ -129,7 +129,8 @@ export default function Clients() {
     setFieldErrors({});
     setSaving(true);
     setFormError(null);
-    const payload = { ...form };
+    const cap = s => s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+    const payload = { ...form, first_name: cap(form.first_name), last_name: cap(form.last_name) };
     delete payload._id;
     Object.keys(payload).forEach(k => { if (payload[k] === "") payload[k] = null; });
 
@@ -245,11 +246,11 @@ export default function Clients() {
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
           <div className="bg-zinc-900 rounded-2xl w-full max-w-2xl" style={{ height: "90vh", display: "flex", flexDirection: "column" }}>
 
-            <h3 style={{ flexShrink: 0 }} className="text-xl font-bold px-6 pt-6 pb-4 text-white border-b border-zinc-800">
+            <h3 style={{ flexShrink: 0, paddingLeft: "24px", paddingRight: "24px" }} className="text-xl font-bold px-6 pt-6 pb-4 text-white border-b border-zinc-800">
               {modal === "add" ? "Add Client" : "Edit Client"}
             </h3>
 
-            <div style={{ flex: "1 1 0", overflowY: "auto", minHeight: 0 }} className="px-6 py-4 space-y-4">
+            <div style={{ flex: "1 1 0", overflowY: "auto", minHeight: 0, paddingLeft: "24px", paddingRight: "24px" }} className="px-6 py-4 space-y-4">
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -351,13 +352,13 @@ export default function Clients() {
 
               <div>
                 <label className="text-xs text-zinc-400 mb-1 block">Notes</label>
-                <textarea value={form.notes} onChange={e => handleChange("notes", e.target.value)} rows={3} className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm resize-none" placeholder="Any additional notes…" />
+                <textarea value={form.notes} onChange={e => handleChange("notes", e.target.value)} rows={3} className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm resize-none" style={{ resize: "vertical", width: "100%", boxSizing: "border-box" }} placeholder="Any additional notes…" />
               </div>
 
               {formError && <p className="text-red-400 text-sm">{formError}</p>}
             </div>
 
-            <div style={{ flexShrink: 0 }} className="px-6 py-4 border-t border-zinc-800 flex justify-end gap-3">
+            <div style={{ flexShrink: 0, paddingLeft: "24px", paddingRight: "24px" }} className="px-6 py-4 border-t border-zinc-800 flex justify-end gap-3">
               <button onClick={closeModal} className="px-5 py-2 rounded-xl border border-zinc-600 text-white hover:bg-zinc-800 transition text-sm">
                 Cancel
               </button>

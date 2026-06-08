@@ -833,14 +833,14 @@ export default function Materials() {
         <div className="fixed inset-0 z-40 bg-black/70 flex items-center justify-center p-4">
           <div className="bg-zinc-900 rounded-2xl w-full max-w-md" style={{ height: '90vh', display: 'flex', flexDirection: 'column' }}>
             {/* Sticky header */}
-            <div className="p-5 pb-3" style={{ flexShrink: 0 }}>
+            <div className="p-5 pb-3" style={{ flexShrink: 0, paddingLeft: "24px", paddingRight: "24px" }}>
               <h2 className="text-lg font-bold">
                 {isEditMode ? "Edit Material" : "Add Material"}
               </h2>
             </div>
 
             {/* Scrollable body */}
-            <div className="px-5" style={{ flex: '1 1 0', overflowY: 'auto', minHeight: 0 }}>
+            <div className="px-5" style={{ flex: '1 1 0', overflowY: 'auto', minHeight: 0, paddingLeft: "24px", paddingRight: "24px" }}>
             <div className="space-y-3">
               <div>
                 <label className="block text-xs text-zinc-400 mb-1">Material Name</label>
@@ -856,6 +856,7 @@ export default function Materials() {
                 <label className="block text-xs text-zinc-400 mb-1">Description</label>
                 <textarea
                   className="w-full p-2 rounded-xl bg-zinc-950 border border-zinc-700 text-white text-sm resize-none"
+                  style={{ resize: "vertical", width: "100%", boxSizing: "border-box" }}
                   value={tempMaterial.description}
                   onChange={(e) => handleChange("description", e.target.value)}
                   placeholder="Enter material description (optional)"
@@ -991,7 +992,7 @@ export default function Materials() {
             </div>
 
             {/* Sticky footer with action buttons */}
-            <div className="p-5 pt-4 border-t border-zinc-800 flex justify-between items-center" style={{ flexShrink: 0 }}>
+            <div className="p-5 pt-4 border-t border-zinc-800 flex justify-between items-center" style={{ flexShrink: 0, paddingLeft: "24px", paddingRight: "24px" }}>
               {isEditMode && (
                 <button
                   onClick={() => openDeleteConfirm(editingMaterialId)}

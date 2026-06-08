@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../supabaseClient";
 import { sendQuote } from "../utils/quoteSend";
@@ -27,9 +27,14 @@ export default function AddJobModal({ isOpen, onClose, onSaved, profile, fixedCu
   const [saving,           setSaving]           = useState(false);
   const [sending,          setSending]          = useState(false);
   const [formError,        setFormError]        = useState(null);
-  const [customerSearch,   setCustomerSearch]   = useState("");
-  const [customerDropOpen, setCustomerDropOpen] = useState(false);
-  const [sendStep,         setSendStep]         = useState(null); // { quoteId } when awaiting send decision
+  const [customerSearch,      setCustomerSearch]      = useState("");
+  const [customerDropOpen,    setCustomerDropOpen]    = useState(false);
+  const [customerMode,        setCustomerMode]        = useState("search"); // "search" | "new"
+  const [newCustForm,         setNewCustForm]         = useState({ first_name: "", last_name: "", email: "" });
+  const [creatingCust,        setCreatingCust]        = useState(false);
+  const [createCustError,     setCreateCustError]     = useState(null);
+  const [sendStep,            setSendStep]            = useState(null); // { quoteId } when awaiting send decision
+  const newCustIdsRef = useRef([]); // IDs of customers created in this session; deleted on cancel
 
   // Reset form whenever modal opens
   useEffect(() => {
@@ -40,7 +45,12 @@ export default function AddJobModal({ isOpen, onClose, onSaved, profile, fixedCu
     setFormError(null);
     setCustomerSearch("");
     setCustomerDropOpen(false);
+    setCustomerMode("search");
+    setNewCustForm({ first_name: "", last_name: "", email: "" });
+    setCreatingCust(false);
+    setCreateCustError(null);
     setSendStep(null);
+    newCustIdsRef.current = [];
   }, [isOpen]);
 
   // Load customer list (only when no fixed customer)
@@ -110,8 +120,9 @@ export default function AddJobModal({ isOpen, onClose, onSaved, profile, fixedCu
   };
 
   const save = async () => {
-    if (!form.title.trim()) { setFormError("Title is required."); return; }
-    if (!form.customer_id)  { setFormError("Please select a customer."); return; }
+    if (!form.title.trim())                        { setFormError("Title is required."); return; }
+    if (!form.customer_id)                         { setFormError("Please select a customer."); return; }
+    if (!form.address_line1 && !form.postcode)     { setFormError("Address is required."); return; }
     setSaving(true);
     setFormError(null);
 
@@ -121,6 +132,16 @@ export default function AddJobModal({ isOpen, onClose, onSaved, profile, fixedCu
     const { data: job, error: jobErr } = await supabase
       .from("job").insert(payload).select("job_id").single();
     if (jobErr) { setSaving(false); setFormError(jobErr.message || "Failed to save job."); return; }
+
+    // Sync address back to the customer record so it's consistent everywhere
+    await supabase.from("customer").update({
+      address_line1: payload.address_line1 || null,
+      address_line2: payload.address_line2 || null,
+      town_city:     payload.town_city     || null,
+      county:        payload.county        || null,
+      postcode:      payload.postcode      || null,
+      country:       payload.country       || null,
+    }).eq("customer_id", payload.customer_id);
 
     // Get next quote number for this customer (per-customer sequential)
     const customerId = fixedCustomerId || form.customer_id;
@@ -263,6 +284,7 @@ export default function AddJobModal({ isOpen, onClose, onSaved, profile, fixedCu
     }
 
     setSaving(false);
+    newCustIdsRef.current = []; // job saved — keep any customers created in this session
 
     if (!selectedServices.length) {
       // No services — go straight to the quote view
@@ -297,6 +319,41 @@ export default function AddJobModal({ isOpen, onClose, onSaved, profile, fixedCu
     navigate(`/crm/quotes/${id}`);
   };
 
+  const handleCreateCustomer = async () => {
+    if (!newCustForm.first_name.trim()) { setCreateCustError("First name is required."); return; }
+    setCreatingCust(true);
+    setCreateCustError(null);
+    const cap = s => s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+    const { data: cust, error: custErr } = await supabase
+      .from("customer")
+      .insert({
+        first_name:  cap(newCustForm.first_name.trim()),
+        last_name:   cap(newCustForm.last_name.trim())  || null,
+        email:       newCustForm.email.trim()            || null,
+        business_id: profile.business_id,
+      })
+      .select("customer_id, first_name, last_name, address_line1, address_line2, town_city, county, postcode, country")
+      .single();
+    if (custErr) { setCreatingCust(false); setCreateCustError(custErr.message || "Failed to create customer."); return; }
+    newCustIdsRef.current.push(cust.customer_id);
+    setCustomers(prev => [...prev, cust]);
+    handleCustomerChange(cust.customer_id);
+    setCustomerSearch([cust.first_name, cust.last_name].filter(Boolean).join(" ") || "Unnamed");
+    setCustomerMode("search");
+    setNewCustForm({ first_name: "", last_name: "", email: "" });
+    setCreatingCust(false);
+  };
+
+  const handleCancel = async () => {
+    if (newCustIdsRef.current.length) {
+      for (const id of newCustIdsRef.current) {
+        await supabase.from("customer").delete().eq("customer_id", id);
+      }
+      newCustIdsRef.current = [];
+    }
+    onClose();
+  };
+
   const customerName = c => [c?.first_name, c?.last_name].filter(Boolean).join(" ") || "Unnamed";
 
   if (!isOpen) return null;
@@ -306,11 +363,11 @@ export default function AddJobModal({ isOpen, onClose, onSaved, profile, fixedCu
       <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
         <div className="bg-zinc-900 rounded-2xl w-full max-w-2xl" style={{ height: "90vh", display: "flex", flexDirection: "column" }}>
 
-          <h3 style={{ flexShrink: 0 }} className="text-xl font-bold px-6 pt-6 pb-4 text-white border-b border-zinc-800">
+          <h3 style={{ flexShrink: 0, paddingLeft: "24px", paddingRight: "24px" }} className="text-xl font-bold px-6 pt-6 pb-4 text-white border-b border-zinc-800">
             Add Job
           </h3>
 
-          <div style={{ flex: "1 1 0", overflowY: "auto", minHeight: 0 }} className="px-6 py-4 space-y-4">
+          <div style={{ flex: "1 1 0", overflowY: "auto", minHeight: 0, paddingLeft: "24px", paddingRight: "24px" }} className="px-6 py-4 space-y-4">
 
             {/* Title */}
             <div>
@@ -325,47 +382,117 @@ export default function AddJobModal({ isOpen, onClose, onSaved, profile, fixedCu
 
             {/* Customer — hidden when fixed */}
             {!fixedCustomerId && (
-              <div style={{ position: "relative" }}>
+              <div>
                 <label className="text-xs text-zinc-400 mb-1 block">Customer <span className="text-red-400">*</span></label>
-                <input
-                  value={customerSearch}
-                  onChange={e => {
-                    setCustomerSearch(e.target.value);
-                    setCustomerDropOpen(true);
-                    if (!e.target.value) handleCustomerChange("");
-                  }}
-                  onFocus={() => setCustomerDropOpen(true)}
-                  onBlur={() => setTimeout(() => setCustomerDropOpen(false), 150)}
-                  placeholder="Search customer…"
-                  className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm"
-                />
-                {customerDropOpen && (
-                  <div style={{
-                    position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0,
-                    zIndex: 200, background: "#09090b", border: "1px solid #3f3f46",
-                    borderRadius: "6px", maxHeight: "200px", overflowY: "auto",
-                  }}>
-                    {customers
-                      .filter(c => customerName(c).toLowerCase().includes(customerSearch.toLowerCase()))
-                      .map(c => (
+
+                {customerMode === "search" ? (
+                  <div style={{ position: "relative" }}>
+                    <input
+                      value={customerSearch}
+                      onChange={e => {
+                        setCustomerSearch(e.target.value);
+                        setCustomerDropOpen(true);
+                        if (!e.target.value) handleCustomerChange("");
+                      }}
+                      onFocus={() => setCustomerDropOpen(true)}
+                      onBlur={() => setTimeout(() => setCustomerDropOpen(false), 150)}
+                      placeholder="Search customer…"
+                      className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm"
+                    />
+                    {customerDropOpen && (
+                      <div style={{
+                        position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0,
+                        zIndex: 200, background: "#09090b", border: "1px solid #3f3f46",
+                        borderRadius: "6px", maxHeight: "220px", overflowY: "auto",
+                      }}>
+                        {customers
+                          .filter(c => customerName(c).toLowerCase().includes(customerSearch.toLowerCase()))
+                          .map(c => (
+                            <div
+                              key={c.customer_id}
+                              onMouseDown={() => {
+                                handleCustomerChange(c.customer_id);
+                                setCustomerSearch(customerName(c));
+                                setCustomerDropOpen(false);
+                              }}
+                              className="px-4 py-3 text-sm text-white cursor-pointer hover:bg-zinc-800 transition"
+                              style={{ borderBottom: "1px solid #27272a" }}
+                            >
+                              {customerName(c)}
+                            </div>
+                          ))}
+                        {customers.filter(c =>
+                          customerName(c).toLowerCase().includes(customerSearch.toLowerCase())
+                        ).length === 0 && (
+                          <p className="px-4 py-3 text-sm text-zinc-500 border-b border-zinc-800">No customers found.</p>
+                        )}
                         <div
-                          key={c.customer_id}
                           onMouseDown={() => {
-                            handleCustomerChange(c.customer_id);
-                            setCustomerSearch(customerName(c));
                             setCustomerDropOpen(false);
+                            setCustomerMode("new");
+                            setCreateCustError(null);
                           }}
-                          className="px-4 py-3 text-sm text-white cursor-pointer hover:bg-zinc-800 transition"
-                          style={{ borderBottom: "1px solid #27272a" }}
+                          className="px-4 py-3 text-sm cursor-pointer hover:bg-zinc-800 transition font-medium"
+                          style={{ color: "#38bdf8" }}
                         >
-                          {customerName(c)}
+                          + Add new customer
                         </div>
-                      ))}
-                    {customers.filter(c =>
-                      customerName(c).toLowerCase().includes(customerSearch.toLowerCase())
-                    ).length === 0 && (
-                      <p className="px-4 py-3 text-sm text-zinc-500">No customers found.</p>
+                      </div>
                     )}
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-zinc-700 p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm text-zinc-300 font-medium">New Customer</p>
+                      <button
+                        type="button"
+                        onClick={() => { setCustomerMode("search"); setCreateCustError(null); }}
+                        className="text-zinc-500 text-xs hover:text-white transition"
+                      >
+                        ← Back to search
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-xs text-zinc-400 mb-1 block">First Name <span className="text-red-400">*</span></label>
+                        <input
+                          value={newCustForm.first_name}
+                          onChange={e => setNewCustForm(prev => ({ ...prev, first_name: e.target.value }))}
+                          className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm"
+                          placeholder="First name"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-zinc-400 mb-1 block">Last Name</label>
+                        <input
+                          value={newCustForm.last_name}
+                          onChange={e => setNewCustForm(prev => ({ ...prev, last_name: e.target.value }))}
+                          className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm"
+                          placeholder="Last name"
+                        />
+                      </div>
+                      <div className="col-span-2">
+                        <label className="text-xs text-zinc-400 mb-1 block">Email</label>
+                        <input
+                          type="email"
+                          value={newCustForm.email}
+                          onChange={e => setNewCustForm(prev => ({ ...prev, email: e.target.value }))}
+                          className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm"
+                          placeholder="Email address"
+                        />
+                      </div>
+                    </div>
+                    {createCustError && <p className="text-red-400 text-sm">{createCustError}</p>}
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        onClick={handleCreateCustomer}
+                        disabled={creatingCust}
+                        className="px-4 py-2 rounded-xl bg-sky-500 text-black font-semibold hover:bg-sky-400 transition text-sm disabled:opacity-50"
+                      >
+                        {creatingCust ? "Creating…" : "Add Customer"}
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -379,6 +506,7 @@ export default function AddJobModal({ isOpen, onClose, onSaved, profile, fixedCu
                 onChange={e => handleChange("description", e.target.value)}
                 rows={3}
                 className="w-full p-3 rounded-xl bg-zinc-950 text-white text-sm resize-none"
+                style={{ resize: "vertical", width: "100%", boxSizing: "border-box" }}
                 placeholder="Details about the job…"
               />
             </div>
@@ -468,7 +596,7 @@ export default function AddJobModal({ isOpen, onClose, onSaved, profile, fixedCu
           </div>
 
           {sendStep ? (
-            <div style={{ flexShrink: 0 }} className="px-6 py-4 border-t border-zinc-800">
+            <div style={{ flexShrink: 0, paddingLeft: "24px", paddingRight: "24px" }} className="px-6 py-4 border-t border-zinc-800">
               <p className="text-sm text-white font-medium mb-3">
                 Job saved. Would you like to send the quote to the customer now?
               </p>
@@ -490,8 +618,8 @@ export default function AddJobModal({ isOpen, onClose, onSaved, profile, fixedCu
               </div>
             </div>
           ) : (
-            <div style={{ flexShrink: 0 }} className="px-6 py-4 border-t border-zinc-800 flex justify-end gap-3">
-              <button onClick={onClose} className="px-5 py-2 rounded-xl border border-zinc-600 text-white hover:bg-zinc-800 transition text-sm">Cancel</button>
+            <div style={{ flexShrink: 0, paddingLeft: "24px", paddingRight: "24px" }} className="px-6 py-4 border-t border-zinc-800 flex justify-end gap-3">
+              <button onClick={handleCancel} className="px-5 py-2 rounded-xl border border-zinc-600 text-white hover:bg-zinc-800 transition text-sm">Cancel</button>
               <button onClick={save} disabled={saving} className="px-5 py-2 rounded-xl bg-sky-500 text-black font-semibold hover:bg-sky-400 transition text-sm disabled:opacity-50">
                 {saving ? "Saving…" : "Add Job"}
               </button>

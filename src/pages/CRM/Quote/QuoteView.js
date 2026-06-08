@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useParams } from "react-router-dom";
 import PageHeader from "../../../components/PageHeader";
 import QuoteDetails from "./QuoteDetails";
@@ -11,7 +11,7 @@ export default function QuoteView() {
   const [activeTab,           setActiveTab]           = useState("Quote Details");
   const [hasCustomerRequests, setHasCustomerRequests] = useState(false);
 
-  const checkCustomerRequests = async () => {
+  const checkCustomerRequests = useCallback(async () => {
     if (!quoteId) return;
     const { data } = await supabase
       .from("quote_service_link")
@@ -20,13 +20,18 @@ export default function QuoteView() {
     setHasCustomerRequests(
       (data || []).some(row => row.service?.service_type === "Customer Request")
     );
-  };
+  }, [quoteId]);
 
-  useEffect(() => { checkCustomerRequests(); }, [quoteId]);
+  useEffect(() => { checkCustomerRequests(); }, [checkCustomerRequests]);
+
+  const handleTabChange = (tab) => {
+    setActiveTab(tab);
+    if (tab === "Quote Details") checkCustomerRequests();
+  };
 
   const renderContent = () => {
     switch (activeTab) {
-      case "Quote Details": return <QuoteDetails hasCustomerRequests={hasCustomerRequests} onNavigateToServices={() => setActiveTab("Services")} />;
+      case "Quote Details": return <QuoteDetails hasCustomerRequests={hasCustomerRequests} onNavigateToServices={() => handleTabChange("Services")} />;
       case "Services":      return <QuoteServices onCustomerRequestsChange={checkCustomerRequests} />;
       case "Timeline":      return <QuoteTimeline />;
       default:              return null;
@@ -42,7 +47,7 @@ export default function QuoteView() {
           {["Quote Details", "Services", "Timeline"].map(tab => (
             <button
               key={tab}
-              onClick={() => setActiveTab(tab)}
+              onClick={() => handleTabChange(tab)}
               className={`w-full text-left px-4 py-3 rounded-lg transition relative ${
                 activeTab === tab
                   ? "bg-sky-500 text-black font-semibold"

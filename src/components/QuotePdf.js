@@ -182,9 +182,8 @@ export default function QuotePdf({ quote, services = [], customer, job, business
           return (
             <View key={i} style={[s.tdRow, { flexDirection: "column", paddingVertical: 8 }]}>
               {/* Service header row */}
-              <View style={[s.row, { justifyContent: "space-between", marginBottom: 3 }]}>
-                <Text style={{ fontFamily: "Helvetica-Bold", flex: 1 }}>{sv.service?.title || "—"}</Text>
-                <Text style={{ color: GRAY, width: 36, textAlign: "right" }}>×{svQty}</Text>
+              <View style={[s.row, { marginBottom: 3 }]}>
+                <Text style={{ fontFamily: "Helvetica-Bold" }}>{svQty} x {sv.service?.title || "—"}</Text>
               </View>
               {sv.task ? <Text style={{ color: GRAY, fontSize: 8.5, marginBottom: 4 }}>{sv.task}</Text> : null}
 
